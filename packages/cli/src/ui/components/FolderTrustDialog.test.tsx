@@ -70,7 +70,7 @@ describe('FolderTrustDialog', () => {
     );
 
     expect(lastFrame()).toContain(
-      'To see changes, Gemini CLI must be restarted',
+      'To see changes, Dev X CLI must be restarted',
     );
   });
 

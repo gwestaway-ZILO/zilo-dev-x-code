@@ -7,34 +7,30 @@
 import type React from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { type Config } from '@google/gemini-cli-core';
 
 interface TipsProps {
-  config: Config;
+  config: unknown; // Config is passed but not used
 }
 
-export const Tips: React.FC<TipsProps> = ({ config }) => {
-  const geminiMdFileCount = config.getGeminiMdFileCount();
+export const Tips: React.FC<TipsProps> = () => {
   return (
     <Box flexDirection="column">
       <Text color={Colors.Foreground}>Tips for getting started:</Text>
       <Text color={Colors.Foreground}>
-        1. Ask questions, edit files, or run commands.
+        1. Run{' '}
+        <Text bold color={Colors.AccentPurple}>
+          /init
+        </Text>{' '}
+        to analyze your project and create a DevX.md file.
       </Text>
       <Text color={Colors.Foreground}>
-        2. Be specific for the best results.
+        2. Ask questions, edit files, or run commands.
       </Text>
-      {geminiMdFileCount === 0 && (
-        <Text color={Colors.Foreground}>
-          3. Create{' '}
-          <Text bold color={Colors.AccentPurple}>
-            GEMINI.md
-          </Text>{' '}
-          files to customize your interactions with Gemini.
-        </Text>
-      )}
       <Text color={Colors.Foreground}>
-        {geminiMdFileCount === 0 ? '4.' : '3.'}{' '}
+        3. Be specific for the best results.
+      </Text>
+      <Text color={Colors.Foreground}>
+        4.{' '}
         <Text bold color={Colors.AccentPurple}>
           /help
         </Text>{' '}

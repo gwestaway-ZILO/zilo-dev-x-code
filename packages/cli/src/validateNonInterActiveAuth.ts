@@ -17,6 +17,12 @@ function getAuthTypeFromEnv(): AuthType | undefined {
   if (process.env['GOOGLE_GENAI_USE_VERTEXAI'] === 'true') {
     return AuthType.USE_VERTEX_AI;
   }
+  if (process.env['AWS_ACCESS_KEY_ID'] && process.env['AWS_SECRET_ACCESS_KEY']) {
+    return AuthType.USE_AWS_BEDROCK;
+  }
+  if (process.env['ANTHROPIC_API_KEY']) {
+    return AuthType.USE_CLAUDE_API;
+  }
   if (process.env['GEMINI_API_KEY']) {
     return AuthType.USE_GEMINI;
   }
@@ -45,7 +51,7 @@ export async function validateNonInteractiveAuth(
 
   if (!effectiveAuthType) {
     console.error(
-      `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: GEMINI_API_KEY, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA`,
+      `Please set an Auth method in your ${USER_SETTINGS_PATH} or specify one of the following environment variables before running: ANTHROPIC_API_KEY, GEMINI_API_KEY, AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (for Bedrock), GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA`,
     );
     process.exit(1);
   }

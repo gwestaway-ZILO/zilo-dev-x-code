@@ -50,6 +50,14 @@ export function AuthDialog({
         ]
       : []),
     {
+      label: 'Use Claude API Key',
+      value: AuthType.USE_CLAUDE_API,
+    },
+    {
+      label: 'Amazon Bedrock (Claude)',
+      value: AuthType.USE_AWS_BEDROCK,
+    },
+    {
       label: 'Use Gemini API Key',
       value: AuthType.USE_GEMINI,
     },
@@ -80,6 +88,14 @@ export function AuthDialog({
       return item.value === defaultAuthType;
     }
 
+    if (process.env['AWS_ACCESS_KEY_ID'] && process.env['AWS_SECRET_ACCESS_KEY']) {
+      return item.value === AuthType.USE_AWS_BEDROCK;
+    }
+
+    if (process.env['ANTHROPIC_API_KEY']) {
+      return item.value === AuthType.USE_CLAUDE_API;
+    }
+
     if (process.env['GEMINI_API_KEY']) {
       return item.value === AuthType.USE_GEMINI;
     }
@@ -104,7 +120,7 @@ export function AuthDialog({
           console.log(
             `
 ----------------------------------------------------------------
-Logging in with Google... Please restart Gemini CLI to continue.
+Logging in with Google... Please restart Dev X CLI to continue.
 ----------------------------------------------------------------
             `,
           );
@@ -174,7 +190,7 @@ Logging in with Google... Please restart Gemini CLI to continue.
         <Text color={Colors.Gray}>(Use Enter to select)</Text>
       </Box>
       <Box marginTop={1}>
-        <Text>Terms of Services and Privacy Notice for Gemini CLI</Text>
+        <Text>Terms of Services and Privacy Notice for Dev X CLI</Text>
       </Box>
       <Box marginTop={1}>
         <Text color={Colors.AccentBlue}>

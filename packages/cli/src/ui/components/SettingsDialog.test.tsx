@@ -772,7 +772,7 @@ describe('SettingsDialog', () => {
 
       // Should not show restart prompt initially
       expect(lastFrame()).not.toContain(
-        'To see changes, Gemini CLI must be restarted',
+        'To see changes, Dev X CLI must be restarted',
       );
 
       unmount();

@@ -75,14 +75,73 @@ export class BaseLlmClient {
       promptId,
     } = options;
 
-    const requestConfig: GenerateContentConfig = {
-      abortSignal,
-      ...this.defaultUtilityConfig,
-      ...options.config,
-      ...(systemInstruction && { systemInstruction }),
-      responseJsonSchema: schema,
-      responseMimeType: 'application/json',
-    };
+    // Detect if we're using Claude/Bedrock models
+    // Check for various Claude model patterns
+    const modelLower = model.toLowerCase();
+    const isClaudeModel = modelLower.includes('claude') || 
+                          modelLower.includes('anthropic') ||
+                          modelLower.includes('sonnet') ||
+                          modelLower.includes('opus') ||
+                          modelLower.includes('haiku');
+    const isBedrockModel = modelLower.includes('bedrock') || 
+                           modelLower.includes('aws') ||
+                           modelLower.includes('us.anthropic') ||
+                           modelLower.includes('eu.anthropic') ||
+                           modelLower.includes('ap.anthropic');
+    const needsClaudeAdapter = isClaudeModel || isBedrockModel;
+
+    let requestConfig: GenerateContentConfig;
+    let modifiedContents = contents;
+
+    if (needsClaudeAdapter) {
+      // For Claude/Bedrock, we need to include the schema in the prompt itself
+      // and not use responseJsonSchema which Claude doesn't support
+      // Use compact JSON to reduce tokens
+      const schemaString = JSON.stringify(schema);
+      const claudeJsonInstruction = `Return ONLY JSON: ${schemaString}`;
+
+      // Prepend the JSON instruction to the last user message
+      modifiedContents = [...contents];
+      if (modifiedContents.length > 0) {
+        const lastMessage = modifiedContents[modifiedContents.length - 1];
+        if (lastMessage.role === 'user' && lastMessage.parts && lastMessage.parts.length > 0) {
+          const lastPart = lastMessage.parts[lastMessage.parts.length - 1];
+          if (lastPart && 'text' in lastPart) {
+            // Prepend the JSON instruction to the existing user message
+            lastMessage.parts[lastMessage.parts.length - 1] = {
+              text: claudeJsonInstruction + '\n\n' + lastPart.text
+            };
+          }
+        } else {
+          // Add as a new user message if the last message isn't from the user
+          modifiedContents.push({
+            role: 'user',
+            parts: [{ text: claudeJsonInstruction }]
+          });
+        }
+      }
+
+      // Don't use responseJsonSchema for Claude
+      requestConfig = {
+        abortSignal,
+        ...this.defaultUtilityConfig,
+        ...options.config,
+        ...(systemInstruction && { systemInstruction }),
+        // Don't set these for Claude
+        // responseJsonSchema: schema,
+        // responseMimeType: 'application/json',
+      };
+    } else {
+      // For Gemini models, use the original approach
+      requestConfig = {
+        abortSignal,
+        ...this.defaultUtilityConfig,
+        ...options.config,
+        ...(systemInstruction && { systemInstruction }),
+        responseJsonSchema: schema,
+        responseMimeType: 'application/json',
+      };
+    }
 
     try {
       const apiCall = () =>
@@ -90,7 +149,7 @@ export class BaseLlmClient {
           {
             model,
             config: requestConfig,
-            contents,
+            contents: modifiedContents,
           },
           promptId,
         );
@@ -111,7 +170,7 @@ export class BaseLlmClient {
         throw error;
       }
 
-      text = this.cleanJsonResponse(text, model);
+      text = this.cleanJsonResponse(text, model, needsClaudeAdapter);
 
       try {
         return JSON.parse(text);
@@ -156,7 +215,8 @@ export class BaseLlmClient {
     }
   }
 
-  private cleanJsonResponse(text: string, model: string): string {
+  private cleanJsonResponse(text: string, model: string, isClaudeModel: boolean = false): string {
+    // Handle markdown code blocks
     const prefix = '```json';
     const suffix = '```';
     if (text.startsWith(prefix) && text.endsWith(suffix)) {
@@ -166,6 +226,66 @@ export class BaseLlmClient {
       );
       return text.substring(prefix.length, text.length - suffix.length).trim();
     }
+    
+    // For Claude models, be more aggressive about extracting JSON
+    if (isClaudeModel) {
+      // First try to find JSON at the end of the response (Claude often adds explanation first)
+      const lastJsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}(?!.*\{)/s);
+      if (lastJsonMatch) {
+        const extracted = lastJsonMatch[0];
+        try {
+          JSON.parse(extracted);
+          if (extracted !== text) {
+            logMalformedJsonResponse(
+              this.config,
+              new MalformedJsonResponseEvent(model),
+            );
+          }
+          return extracted;
+        } catch {
+          // Try other extraction methods
+        }
+      }
+    }
+    
+    // Try to extract JSON from partial responses
+    // Look for JSON object patterns
+    const jsonObjectMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonObjectMatch) {
+      const extracted = jsonObjectMatch[0];
+      // Validate it's actually parseable
+      try {
+        JSON.parse(extracted);
+        if (extracted !== text) {
+          logMalformedJsonResponse(
+            this.config,
+            new MalformedJsonResponseEvent(model),
+          );
+        }
+        return extracted;
+      } catch {
+        // If extraction failed, return original text
+      }
+    }
+    
+    // Look for JSON array patterns
+    const jsonArrayMatch = text.match(/\[[\s\S]*\]/);
+    if (jsonArrayMatch) {
+      const extracted = jsonArrayMatch[0];
+      try {
+        JSON.parse(extracted);
+        if (extracted !== text) {
+          logMalformedJsonResponse(
+            this.config,
+            new MalformedJsonResponseEvent(model),
+          );
+        }
+        return extracted;
+      } catch {
+        // If extraction failed, return original text
+      }
+    }
+    
     return text;
   }
 }

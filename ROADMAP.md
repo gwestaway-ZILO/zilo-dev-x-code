@@ -1,63 +1,86 @@
-# Gemini CLI Roadmap
+# Zilo Dev X CLI Roadmap (Claude Fork)
 
-The [Official Gemini CLI Roadmap](https://github.com/orgs/google-gemini/projects/11/)
+This is a fork of the [Official Gemini CLI](https://github.com/google-gemini/gemini-cli) that has been enhanced to support Anthropic's Claude models.
 
-Gemini CLI is an open-source AI agent that brings the power of Gemini directly into your terminal. It provides lightweight access to Gemini, giving you the most direct path from your prompt to our model.
+## Current Implementation Status
 
-This document outlines our approach to the Gemini CLI roadmap. Here, you'll find our guiding principles and a breakdown of the key areas we are
-focused on for development. Our roadmap is not a static list but a dynamic set of priorities that are tracked live in our GitHub Issues.
+### ✅ Completed Features
 
-As an [Apache 2.0 open source project](https://github.com/google-gemini/gemini-cli?tab=Apache-2.0-1-ov-file#readme), we appreciate and welcome [public contributions](https://github.com/google-gemini/gemini-cli/blob/main/CONTRIBUTING.md), and will give first priority to those contributions aligned with our roadmap. If you want to propose a new feature or change to our roadmap, please start by [opening an issue for discussion](https://github.com/google-gemini/gemini-cli/issues/new/choose).
+#### Claude Model Integration
+- **Full Claude API Support:** Complete integration with Anthropic's API using the `@anthropic-ai/sdk`
+- **Model Support:** 
+  - Claude Sonnet 4 (default: `claude-sonnet-4-20250514`)
+  - Claude 3 Opus (`claude-3-opus-20240229`)
+  - Claude 3.5 Haiku (`claude-3-5-haiku-20241022`)
+- **Authentication:** Added "Use Claude API Key" option to auth dialog, supports `ANTHROPIC_API_KEY` environment variable
+- **Auto-detection:** CLI automatically uses Claude when `ANTHROPIC_API_KEY` is set
+- **Context Management:** Custom system prompts ensure Claude identifies itself correctly
 
-## Disclaimer
+#### Core Functionality
+- **Streaming Responses:** Full support for streaming Claude responses
+- **Token Counting:** Estimated token counting (Claude doesn't have direct API)
+- **Tool/Function Calling:** Basic support for Claude's tool use format
+- **All CLI Tools:** File operations, shell commands, code editing work seamlessly with Claude
 
-This roadmap represents our current thinking and is for informational purposes only. It is not a commitment or a guarantee of future delivery. The development, release, and timing of any features are subject to change, and we may update the roadmap based on community discussions as well as when our priorities evolve.
+### 🚧 In Progress / Planned
 
-## Guiding Principles
+#### Enhanced Claude Features
+- **Model Selection UI:** Add ability to switch between Claude models in runtime
+- **Claude-specific Optimizations:** Leverage Claude's 200k context window more effectively
+- **Improved Tool Calling:** Better integration with Claude's tool use patterns
 
-Our development is guided by the following principles:
+#### Compatibility Layer
+- **Dual Model Support:** Allow seamless switching between Claude and Gemini models
+- **Embedding Fallback:** Automatically use Gemini for embeddings when needed
+- **Unified Configuration:** Single config file for both Claude and Gemini settings
 
-- **Power & Simplicity:** Deliver access to state-of-the-art Gemini models with an intuitive and easy-to-use lightweight command-line interface.
-- **Extensibility:** An adaptable agent to help you with a variety of use cases and environments along with the ability to run these agents anywhere.
-- **Intelligent:** Gemini CLI should be reliably ranked among the best agentic tools as measured by benchmarks like SWE Bench, Terminal Bench, and CSAT.
-- **Free and Open Source:** Foster a thriving open source community where cost isn’t a barrier to personal use, and PRs get merged quickly. This means resolving and closing issues, pull requests, and discussion posts quickly.
+### ❌ Not Supported
 
-## How the Roadmap Works
+- **Embeddings:** Claude doesn't support embeddings - use Gemini models for this
+- **Image Generation:** Not available with Claude API
 
-Our roadmap is managed directly through GitHub Issues. See our entry point Roadmap Issue [here](https://github.com/google-gemini/gemini-cli/issues/4191). This approach allows for transparency and gives you a direct way to learn more or get involved with any specific initiative. All our roadmap items will be tagged as Type:`Feature` and Label:`maintainer` for features we are actively working on, or Type:`Task` and Label:`maintainer` for a more detailed list of tasks.
+## Architecture Changes
 
-Issues are organized to provide key information at a glance:
+The fork maintains backward compatibility while adding Claude support through:
 
-- **Target Quarter:** `Milestone` denotes the anticipated delivery timeline.
-- **Feature Area:** Labels such as `area/model` or `area/tooling` categorize the work.
-- **Issue Type:** _Workstream_ => _Epics_ => _Features_ => _Tasks|Bugs_
+1. **Content Generator Abstraction:** `claudeContentGenerator.ts` implements the same interface as Gemini
+2. **Authentication Extension:** Added `USE_CLAUDE_API` auth type
+3. **Model Configuration:** Extended to include Claude model definitions
+4. **Message Format Translation:** Automatic conversion between Gemini and Claude formats
 
-To see what we're working on, you can filter our issues by these dimensions. See all our items [here](https://github.com/orgs/google-gemini/projects/11/views/19)
+## Configuration
 
-## Focus Areas
+### Quick Start
+1. Set your API key: `export ANTHROPIC_API_KEY="your-key"`
+2. Run: `npm start`
+3. Select "Use Claude API Key" when prompted
 
-To better organize our efforts, we categorize our work into several key feature areas. These labels are used on our GitHub Issues to help you filter and
-find initiatives that interest you.
+### Environment Variables
+- `ANTHROPIC_API_KEY`: Your Anthropic API key
+- `GEMINI_SYSTEM_MD`: Path to custom system prompt file
+- `GEMINI_API_KEY`: Optional, for dual-model support
 
-- **Authentication:** Secure user access via API keys, Gemini Code Assist login, etc.
-- **Model:** Support new Gemini models, multi-modality, local execution, and performance tuning.
-- **User Experience:** Improve the CLI's usability, performance, interactive features, and documentation.
-- **Tooling:** Built-in tools and the MCP ecosystem.
-- **Core:** Core functionality of the CLI
-- **Extensibility:** Bringing Gemini CLI to other surfaces e.g. GitHub.
-- **Contribution:** Improve the contribution process via test automation and CI/CD pipeline enhancements.
-- **Platform:** Manage installation, OS support, and the underlying CLI framework.
-- **Quality:** Focus on testing, reliability, performance, and overall product quality.
-- **Background Agents:** Enable long-running, autonomous tasks and proactive assistance.
-- **Security and Privacy:** For all things related to security and privacy
+## Contributing
 
-## How to Contribute
+This fork welcomes contributions that:
+- Improve Claude integration
+- Add Claude-specific features
+- Enhance the compatibility layer
+- Fix bugs in the Claude implementation
 
-Gemini CLI is an open-source project, and we welcome contributions from the community! Whether you're a developer, a designer, or just an enthusiastic user you can find our [Community Guidelines here](https://github.com/google-gemini/gemini-cli/blob/main/CONTRIBUTING.md) to learn how to get started. There are many ways to get involved:
+Please ensure any changes maintain backward compatibility with the original Gemini CLI functionality.
 
-- **Roadmap:** Please review and find areas in our [roadmap](https://github.com/google-gemini/gemini-cli/issues/4191) that you would like to contribute to. Contributions based on this will be easiest to integrate with.
-- **Report Bugs:** If you find an issue, please create a [bug](https://github.com/google-gemini/gemini-cli/issues/new?template=bug_report.yml) with as much detail as possible. If you believe it is a critical breaking issue preventing direct CLI usage, please tag it as `priority/p0`.
-- **Suggest Features:** Have a great idea? We'd love to hear it! Open a [feature request](https://github.com/google-gemini/gemini-cli/issues/new?template=feature_request.yml).
-- **Contribute Code:** Check out our [CONTRIBUTING.md](https://github.com/google-gemini/gemini-cli/blob/main/CONTRIBUTING.md) file for guidelines on how to submit pull requests. We have a list of "good first issues" for new contributors.
-- **Write Documentation:** Help us improve our documentation, tutorials, and examples.
-  We are excited about the future of Gemini CLI and look forward to building it with you!
+## Original Gemini CLI Information
+
+This fork is based on the Gemini CLI, an [Apache 2.0 open source project](https://github.com/google-gemini/gemini-cli). The original focuses on:
+
+- **Power & Simplicity:** Intuitive command-line interface
+- **Extensibility:** Adaptable agent for various use cases
+- **Intelligent:** High performance on benchmarks
+- **Free and Open Source:** Community-driven development
+
+For information about the original Gemini CLI roadmap, see the [Official Roadmap](https://github.com/google-gemini/gemini-cli/issues/4191).
+
+## License
+
+This fork maintains the Apache 2.0 license of the original project.

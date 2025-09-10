@@ -39,5 +39,25 @@ export function validateAuthMethod(authMethod: string): string | null {
     return null;
   }
 
+  if (authMethod === AuthType.USE_CLAUDE_API) {
+    if (!process.env['ANTHROPIC_API_KEY']) {
+      return 'ANTHROPIC_API_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    return null;
+  }
+
+  if (authMethod === AuthType.USE_AWS_BEDROCK) {
+    if (!process.env['AWS_ACCESS_KEY_ID']) {
+      return 'AWS_ACCESS_KEY_ID environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    if (!process.env['AWS_SECRET_ACCESS_KEY']) {
+      return 'AWS_SECRET_ACCESS_KEY environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    if (!process.env['AWS_REGION'] && !process.env['AWS_DEFAULT_REGION']) {
+      return 'AWS_REGION or AWS_DEFAULT_REGION environment variable not found. Add that to your environment and try again (no reload needed if using .env)!';
+    }
+    return null;
+  }
+
   return 'Invalid auth method selected.';
 }

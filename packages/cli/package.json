@@ -1,7 +1,7 @@
 {
   "name": "@google/gemini-cli",
   "version": "0.4.0",
-  "description": "Gemini CLI",
+  "description": "Dev X CLI",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/google-gemini/gemini-cli.git"
@@ -9,7 +9,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "gemini": "dist/index.js"
+    "devx": "dist/index.js"
   },
   "scripts": {
     "build": "node ../../scripts/build_package.js",

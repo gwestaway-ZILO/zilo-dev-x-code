@@ -14,8 +14,10 @@ import type {
 } from '@google/genai';
 import { GoogleGenAI } from '@google/genai';
 import { createCodeAssistContentGenerator } from '../code_assist/codeAssist.js';
-import { DEFAULT_GEMINI_MODEL } from '../config/models.js';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_CLAUDE_MODEL, DEFAULT_BEDROCK_MODEL } from '../config/models.js';
 import type { Config } from '../config/config.js';
+import { ClaudeContentGenerator } from './claudeContentGenerator.js';
+import { BedrockContentGenerator } from './bedrockContentGenerator.js';
 
 import type { UserTierId } from '../code_assist/types.js';
 import { LoggingContentGenerator } from './loggingContentGenerator.js';
@@ -47,6 +49,8 @@ export enum AuthType {
   USE_GEMINI = 'gemini-api-key',
   USE_VERTEX_AI = 'vertex-ai',
   CLOUD_SHELL = 'cloud-shell',
+  USE_CLAUDE_API = 'claude-api-key',
+  USE_AWS_BEDROCK = 'aws-bedrock',
 }
 
 export type ContentGeneratorConfig = {
@@ -65,9 +69,24 @@ export function createContentGeneratorConfig(
   const googleApiKey = process.env['GOOGLE_API_KEY'] || undefined;
   const googleCloudProject = process.env['GOOGLE_CLOUD_PROJECT'] || undefined;
   const googleCloudLocation = process.env['GOOGLE_CLOUD_LOCATION'] || undefined;
+  const anthropicApiKey = process.env['ANTHROPIC_API_KEY'] || undefined;
+  const awsAccessKeyId = process.env['AWS_ACCESS_KEY_ID'] || undefined;
+  const awsSecretAccessKey = process.env['AWS_SECRET_ACCESS_KEY'] || undefined;
+  const awsRegion = process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || undefined;
 
   // Use runtime model from config if available; otherwise, fall back to parameter or default
-  const effectiveModel = config.getModel() || DEFAULT_GEMINI_MODEL;
+  // For Claude, always use Claude model regardless of config
+  let effectiveModel: string;
+  if (authType === AuthType.USE_CLAUDE_API) {
+    // If using Claude auth, use Claude model (ignore any Gemini model setting)
+    effectiveModel = DEFAULT_CLAUDE_MODEL;
+  } else if (authType === AuthType.USE_AWS_BEDROCK) {
+    // If using Bedrock auth, use Bedrock Claude model
+    effectiveModel = DEFAULT_BEDROCK_MODEL;
+  } else {
+    // For other auth types, use config model or default Gemini model
+    effectiveModel = config.getModel() || DEFAULT_GEMINI_MODEL;
+  }
 
   const contentGeneratorConfig: ContentGeneratorConfig = {
     model: effectiveModel,
@@ -96,6 +115,20 @@ export function createContentGeneratorConfig(
   ) {
     contentGeneratorConfig.apiKey = googleApiKey;
     contentGeneratorConfig.vertexai = true;
+
+    return contentGeneratorConfig;
+  }
+
+  if (authType === AuthType.USE_CLAUDE_API && anthropicApiKey) {
+    contentGeneratorConfig.apiKey = anthropicApiKey;
+    contentGeneratorConfig.vertexai = false;
+
+    return contentGeneratorConfig;
+  }
+
+  if (authType === AuthType.USE_AWS_BEDROCK && awsAccessKeyId && awsSecretAccessKey && awsRegion) {
+    // AWS credentials are handled via SDK, not passed as apiKey
+    contentGeneratorConfig.vertexai = false;
 
     return contentGeneratorConfig;
   }
@@ -152,6 +185,21 @@ export async function createContentGenerator(
     });
     return new LoggingContentGenerator(googleGenAI.models, gcConfig);
   }
+
+  if (config.authType === AuthType.USE_CLAUDE_API) {
+    if (!config.apiKey) {
+      throw new Error('ANTHROPIC_API_KEY is required for Claude API');
+    }
+    const claudeGenerator = new ClaudeContentGenerator(config.apiKey, config.model);
+    return new LoggingContentGenerator(claudeGenerator, gcConfig);
+  }
+
+  if (config.authType === AuthType.USE_AWS_BEDROCK) {
+    const awsRegion = process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'];
+    const bedrockGenerator = new BedrockContentGenerator(config.model, awsRegion);
+    return new LoggingContentGenerator(bedrockGenerator, gcConfig);
+  }
+
   throw new Error(
     `Error creating contentGenerator: Unsupported authType: ${config.authType}`,
   );

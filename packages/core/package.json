@@ -20,6 +20,8 @@
     "dist"
   ],
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.61.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.883.0",
     "@google/genai": "1.16.0",
     "@joshua.litt/get-ripgrep": "^0.0.2",
     "@modelcontextprotocol/sdk": "^1.11.0",

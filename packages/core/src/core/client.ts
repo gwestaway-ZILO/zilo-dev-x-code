@@ -518,6 +518,7 @@ export class GeminiClient {
         this.getChat(),
         this,
         signal,
+        this.config.getModel(),
       );
       logNextSpeakerCheck(
         this.config,
@@ -561,22 +562,81 @@ export class GeminiClient {
         ...config,
       };
 
+      // Detect if we're using Claude/Bedrock models
+      // Check for various Claude model patterns
+      const modelLower = model.toLowerCase();
+      const isClaudeModel = modelLower.includes('claude') || 
+                            modelLower.includes('anthropic') ||
+                            modelLower.includes('sonnet') ||
+                            modelLower.includes('opus') ||
+                            modelLower.includes('haiku');
+      const isBedrockModel = modelLower.includes('bedrock') || 
+                             modelLower.includes('aws') ||
+                             modelLower.includes('us.anthropic') ||
+                             modelLower.includes('eu.anthropic') ||
+                             modelLower.includes('ap.anthropic');
+      const needsClaudeAdapter = isClaudeModel || isBedrockModel;
+      
+      // Debug logging
+      if (this.config.getDebugMode()) {
+        console.log('[generateJson] Model:', model);
+        console.log('[generateJson] Needs Claude adapter:', needsClaudeAdapter);
+      }
+
+      let modifiedContents = contents;
+      
+      if (needsClaudeAdapter) {
+        // For Claude/Bedrock, include a minimal JSON instruction
+        // Use compact JSON to reduce tokens
+        const schemaString = JSON.stringify(schema);
+        const claudeJsonInstruction = `Return ONLY JSON: ${schemaString}`;
+
+        // Prepend the JSON instruction to the last user message
+        modifiedContents = [...contents];
+        if (modifiedContents.length > 0) {
+          const lastMessage = modifiedContents[modifiedContents.length - 1];
+          if (lastMessage.role === 'user' && lastMessage.parts && lastMessage.parts.length > 0) {
+            const lastPart = lastMessage.parts[lastMessage.parts.length - 1];
+            if (lastPart && 'text' in lastPart) {
+              // Prepend the JSON instruction to the existing user message
+              lastMessage.parts[lastMessage.parts.length - 1] = {
+                text: claudeJsonInstruction + '\n\n' + lastPart.text
+              };
+            }
+          } else {
+            // Add as a new user message if the last message isn't from the user
+            modifiedContents.push({
+              role: 'user',
+              parts: [{ text: claudeJsonInstruction }]
+            });
+          }
+        }
+      }
+
       const apiCall = () => {
         const modelToUse = this.config.isInFallbackMode()
           ? DEFAULT_GEMINI_FLASH_MODEL
           : model;
         currentAttemptModel = modelToUse;
 
-        return this.getContentGeneratorOrFail().generateContent(
-          {
-            model: modelToUse,
-            config: {
+        const contentConfig = needsClaudeAdapter 
+          ? {
+              ...requestConfig,
+              systemInstruction,
+              // Don't use responseJsonSchema for Claude
+            }
+          : {
               ...requestConfig,
               systemInstruction,
               responseJsonSchema: schema,
               responseMimeType: 'application/json',
-            },
-            contents,
+            };
+
+        return this.getContentGeneratorOrFail().generateContent(
+          {
+            model: modelToUse,
+            config: contentConfig,
+            contents: modifiedContents,
           },
           this.lastPromptId,
         );
@@ -608,6 +668,10 @@ export class GeminiClient {
         throw error;
       }
 
+      // Clean up the response text
+      text = text.trim();
+      
+      // Handle markdown code blocks
       const prefix = '```json';
       const suffix = '```';
       if (text.startsWith(prefix) && text.endsWith(suffix)) {
@@ -618,6 +682,63 @@ export class GeminiClient {
         text = text
           .substring(prefix.length, text.length - suffix.length)
           .trim();
+      }
+
+      // For Claude models, try to extract JSON from narrative responses
+      if (needsClaudeAdapter) {
+        // First try to find JSON at the end of the response (Claude often adds explanation first)
+        const lastJsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}(?!.*\{)/s);
+        if (lastJsonMatch) {
+          const extracted = lastJsonMatch[0];
+          try {
+            const parsed = JSON.parse(extracted);
+            if (extracted !== text) {
+              logMalformedJsonResponse(
+                this.config,
+                new MalformedJsonResponseEvent(currentAttemptModel),
+              );
+            }
+            return parsed;
+          } catch {
+            // Continue to try other extraction methods
+          }
+        }
+
+        // Try to extract JSON object from anywhere in the response
+        const jsonObjectMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonObjectMatch) {
+          const extracted = jsonObjectMatch[0];
+          try {
+            const parsed = JSON.parse(extracted);
+            if (extracted !== text) {
+              logMalformedJsonResponse(
+                this.config,
+                new MalformedJsonResponseEvent(currentAttemptModel),
+              );
+            }
+            return parsed;
+          } catch {
+            // Continue to try parsing the original text
+          }
+        }
+
+        // Try to extract JSON array
+        const jsonArrayMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonArrayMatch) {
+          const extracted = jsonArrayMatch[0];
+          try {
+            const parsed = JSON.parse(extracted);
+            if (extracted !== text) {
+              logMalformedJsonResponse(
+                this.config,
+                new MalformedJsonResponseEvent(currentAttemptModel),
+              );
+            }
+            return parsed;
+          } catch {
+            // Continue to try parsing the original text
+          }
+        }
       }
 
       try {

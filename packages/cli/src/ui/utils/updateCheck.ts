@@ -75,7 +75,7 @@ export async function checkForUpdates(): Promise<UpdateObject | null> {
       );
 
       if (bestUpdate && semver.gt(bestUpdate.latest, currentVersion)) {
-        const message = `A new version of Gemini CLI is available! ${currentVersion} → ${bestUpdate.latest}`;
+        const message = `A new version of Dev X CLI is available! ${currentVersion} → ${bestUpdate.latest}`;
         return {
           message,
           update: { ...bestUpdate, current: currentVersion },
