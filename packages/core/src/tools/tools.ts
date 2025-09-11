@@ -281,22 +281,6 @@ export abstract class BaseDeclarativeTool<
   }
 
   override validateToolParams(params: TParams): string | null {
-    console.log(`[TOOL VALIDATION] ${this.name} called with params:`, JSON.stringify(params, null, 2));
-    console.log(`[TOOL VALIDATION] Expected schema:`, JSON.stringify(this.schema.parametersJsonSchema, null, 2));
-    
-    // EMERGENCY DEBUG: Add extreme debugging for empty params issue
-    console.log(`[EMERGENCY DEBUG] params type:`, typeof params);
-    console.log(`[EMERGENCY DEBUG] params constructor:`, params?.constructor?.name);
-    console.log(`[EMERGENCY DEBUG] params keys:`, Object.keys(params || {}));
-    console.log(`[EMERGENCY DEBUG] params values:`, Object.values(params || {}));
-    console.log(`[EMERGENCY DEBUG] JSON.stringify result:`, JSON.stringify(params));
-    console.log(`[EMERGENCY DEBUG] Is params null/undefined?`, params == null);
-    console.log(`[EMERGENCY DEBUG] Is params an empty object?`, params && Object.keys(params).length === 0);
-    
-    // Log the call stack to see where this is coming from
-    console.log(`[EMERGENCY DEBUG] Call stack:`);
-    console.trace();
-    
     const errors = SchemaValidator.validate(
       this.schema.parametersJsonSchema,
       params,

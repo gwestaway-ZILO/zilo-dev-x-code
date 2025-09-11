@@ -502,6 +502,7 @@ export class BedrockContentGenerator implements ContentGenerator {
     // Convert Gemini format to Bedrock/Claude format
     const contents = this.normalizeContents(request.contents);
     
+    
     // Track tool_use IDs to ensure proper pairing
     const toolUseIds = new Set<string>();
     const toolResultIds = new Set<string>();
@@ -509,10 +510,11 @@ export class BedrockContentGenerator implements ContentGenerator {
     
     // First pass: collect all tool_use IDs
     for (const content of contents) {
-      if (content.role === 'assistant' && content.parts) {
+      if ((content.role === 'assistant' || content.role === 'model') && content.parts) {
         for (const part of content.parts) {
           if ((part as any).functionCall?.id) {
-            toolUseIds.add((part as any).functionCall.id);
+            const toolId = (part as any).functionCall.id;
+            toolUseIds.add(toolId);
           }
         }
       }
@@ -623,8 +625,9 @@ export class BedrockContentGenerator implements ContentGenerator {
     const totalToolResults = toolResultIds.size;
     const orphanedRatio = totalToolResults > 0 ? orphanedToolResultCount / totalToolResults : 0;
     
-    // Start fresh much more aggressively - any orphaned results indicate conversation corruption
-    const shouldStartFresh = orphanedToolResultCount > 0;
+    // Start fresh only when we have multiple orphaned tool results AND a high ratio
+    // This indicates actual conversation corruption rather than normal tool execution
+    const shouldStartFresh = orphanedToolResultCount >= 3 && orphanedRatio >= 0.8;
     
     if (shouldStartFresh) {
       console.log(`ℹ Found ${orphanedToolResultCount} orphaned tool results out of ${totalToolResults} total (${Math.round(orphanedRatio * 100)}%) - starting fresh conversation to avoid loops`);
@@ -681,7 +684,7 @@ export class BedrockContentGenerator implements ContentGenerator {
       if (content.role === 'system') {
         // Bedrock uses a separate system field
         systemPrompt = content.parts?.map((part: any) => part.text || '').join('\n');
-      } else if (content.role === 'user' || content.role === 'assistant') {
+      } else if (content.role === 'user' || content.role === 'assistant' || content.role === 'model') {
         const bedrockContent = this.convertParts(content.parts || [], toolUseIds);
         
         // Handle message content based on type
@@ -704,16 +707,30 @@ export class BedrockContentGenerator implements ContentGenerator {
             continue; // Skip this entire message
           }
           
-          messages.push({
-            role: content.role as 'user' | 'assistant',
-            content: validContent.length === 1 && validContent[0].type === 'text' 
-              ? validContent[0].text! 
-              : validContent,
-          });
+          // Special handling for messages with tool_use: Remove any text parts that come after a tool_use
+          // This is because Bedrock expects clean tool_use messages without trailing text
+          const toolUseIndex = validContent.findIndex(part => part.type === 'tool_use');
+          if (toolUseIndex !== -1) {
+            // Keep only content up to and including the tool_use
+            const cleanedContent = validContent.slice(0, toolUseIndex + 1);
+            messages.push({
+              role: (content.role === 'model' ? 'assistant' : content.role) as 'user' | 'assistant',
+              content: cleanedContent.length === 1 && cleanedContent[0].type === 'text' 
+                ? cleanedContent[0].text! 
+                : cleanedContent,
+            });
+          } else {
+            messages.push({
+              role: (content.role === 'model' ? 'assistant' : content.role) as 'user' | 'assistant',
+              content: validContent.length === 1 && validContent[0].type === 'text' 
+                ? validContent[0].text! 
+                : validContent,
+            });
+          }
         } else {
           // Single text content
           messages.push({
-            role: content.role as 'user' | 'assistant',
+            role: (content.role === 'model' ? 'assistant' : content.role) as 'user' | 'assistant',
             content: bedrockContent,
           });
         }
@@ -723,7 +740,7 @@ export class BedrockContentGenerator implements ContentGenerator {
     // Access generation config from the request
     const config = (request as any).generationConfig;
 
-    return {
+    const bedrockRequest = {
       anthropic_version: 'bedrock-2023-05-31',
       max_tokens: config?.maxOutputTokens || 4096,
       messages,
@@ -733,6 +750,29 @@ export class BedrockContentGenerator implements ContentGenerator {
       system: systemPrompt,
       ...(tools && tools.length > 0 && { tools }),
     };
+
+    // Debug: Log the complete request to see message structure
+    console.log('=== BEDROCK REQUEST DEBUG ===');
+    console.log('Message count:', messages.length);
+    messages.forEach((msg, i) => {
+      console.log(`Message ${i}: role=${msg.role}`);
+      if (Array.isArray(msg.content)) {
+        msg.content.forEach((part: any, partIndex: number) => {
+          if (part.type === 'tool_use') {
+            console.log(`  Part ${partIndex}: tool_use ID=${part.id}, name=${part.name}`);
+          } else if (part.type === 'tool_result') {
+            console.log(`  Part ${partIndex}: tool_result tool_use_id=${part.tool_use_id}`);
+          } else if (part.type === 'text') {
+            console.log(`  Part ${partIndex}: text (${part.text?.length || 0} chars)`);
+          }
+        });
+      } else {
+        console.log(`  Content: text (${msg.content?.length || 0} chars)`);
+      }
+    });
+    console.log('=== END BEDROCK REQUEST DEBUG ===');
+
+    return bedrockRequest;
   }
 
   private convertParts(parts: any[], toolUseIds?: Set<string>): string | Array<{ type: string; text?: string; id?: string; name?: string; input?: any; tool_use_id?: string; content?: string }> {
@@ -776,7 +816,6 @@ export class BedrockContentGenerator implements ContentGenerator {
           continue;
         }
         
-        console.log(`Converting tool result for tool_use_id: ${toolUseId}`);
         convertedParts.push({
           type: 'tool_result',
           tool_use_id: toolUseId,
