@@ -107,10 +107,17 @@ export class LoggingContentGenerator implements ContentGenerator {
     req: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
+    console.log(`[LOGGING-GEN] 📞 LoggingContentGenerator.generateContent called`);
+    console.log(`[LOGGING-GEN] UserPromptId: ${userPromptId}`);
+    console.log(`[LOGGING-GEN] Wrapped generator type: ${this.wrapped.constructor.name}`);
+    
     const startTime = Date.now();
     this.logApiRequest(toContents(req.contents), req.model, userPromptId);
     try {
+      console.log(`[LOGGING-GEN] 🔄 Calling wrapped.generateContent...`);
       const response = await this.wrapped.generateContent(req, userPromptId);
+      console.log(`[LOGGING-GEN] ✅ Received response from wrapped generator`);
+      
       const durationMs = Date.now() - startTime;
       this._logApiResponse(
         durationMs,
@@ -121,6 +128,7 @@ export class LoggingContentGenerator implements ContentGenerator {
       );
       return response;
     } catch (error) {
+      console.log(`[LOGGING-GEN] ❌ Error from wrapped generator:`, error);
       const durationMs = Date.now() - startTime;
       this._logApiError(durationMs, error, req.model, userPromptId);
       throw error;
@@ -131,13 +139,20 @@ export class LoggingContentGenerator implements ContentGenerator {
     req: GenerateContentParameters,
     userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
+    console.log(`[LOGGING-GEN] 📞 LoggingContentGenerator.generateContentStream called`);
+    console.log(`[LOGGING-GEN] UserPromptId: ${userPromptId}`);
+    console.log(`[LOGGING-GEN] Wrapped generator type: ${this.wrapped.constructor.name}`);
+    
     const startTime = Date.now();
     this.logApiRequest(toContents(req.contents), req.model, userPromptId);
 
     let stream: AsyncGenerator<GenerateContentResponse>;
     try {
+      console.log(`[LOGGING-GEN] 🔄 Calling wrapped.generateContentStream...`);
       stream = await this.wrapped.generateContentStream(req, userPromptId);
+      console.log(`[LOGGING-GEN] ✅ Received stream from wrapped generator`);
     } catch (error) {
+      console.log(`[LOGGING-GEN] ❌ Error from wrapped generator:`, error);
       const durationMs = Date.now() - startTime;
       this._logApiError(durationMs, error, req.model, userPromptId);
       throw error;

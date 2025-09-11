@@ -491,7 +491,13 @@ export async function loadCliConfig(
   // In non-interactive mode, exclude tools that require a prompt.
   const extraExcludes: string[] = [];
   if (!interactive && !argv.experimentalAcp) {
-    switch (approvalMode) {
+    // Check if this is an /init command - if so, allow write_file by using AUTO_EDIT behavior
+    const isInitCommand = question.trim() === '/init';
+    const effectiveApprovalMode = isInitCommand && approvalMode === ApprovalMode.DEFAULT 
+      ? ApprovalMode.AUTO_EDIT 
+      : approvalMode;
+    
+    switch (effectiveApprovalMode) {
       case ApprovalMode.DEFAULT:
         // In default non-interactive mode, all tools that require approval are excluded.
         extraExcludes.push(ShellTool.Name, EditTool.Name, WriteFileTool.Name);
@@ -514,6 +520,7 @@ export async function loadCliConfig(
     activeExtensions,
     extraExcludes.length > 0 ? extraExcludes : undefined,
   );
+  
   const blockedMcpServers: Array<{ name: string; extensionName: string }> = [];
 
   if (!argv.allowedMcpServerNames) {

@@ -12,6 +12,7 @@ import { makeRelative, shortenPath } from '../utils/paths.js';
 import type { Config } from '../config/config.js';
 import { DEFAULT_FILE_FILTERING_OPTIONS } from '../config/config.js';
 import { ToolErrorType } from './tool-error.js';
+import { AuthType } from '../core/contentGenerator.js';
 
 /**
  * Parameters for the LS tool
@@ -276,11 +277,22 @@ export class LSTool extends BaseDeclarativeTool<LSToolParams, ToolResult> {
   static readonly Name = 'list_directory';
 
   constructor(private config: Config) {
-    super(
-      LSTool.Name,
-      'ReadFolder',
-      'Lists the names of files and subdirectories directly within a specified directory path. Can optionally ignore entries matching provided glob patterns.',
-      Kind.Search,
+    // Detect if we're using Bedrock and use simplified schema for validation
+    const isBedrock = config.getContentGeneratorConfig()?.authType === AuthType.USE_AWS_BEDROCK;
+    
+    const parameterSchema = isBedrock ? 
+      // Simplified schema for Bedrock that matches what we send to Claude
+      {
+        properties: {
+          path: {
+            description: 'Absolute path to directory',
+            type: 'string',
+          },
+        },
+        required: ['path'],
+        type: 'object',
+      } :
+      // Full schema for other providers
       {
         properties: {
           path: {
@@ -315,7 +327,16 @@ export class LSTool extends BaseDeclarativeTool<LSToolParams, ToolResult> {
         },
         required: ['path'],
         type: 'object',
-      },
+      };
+
+    console.log(`[LSTool] Initializing with ${isBedrock ? 'Bedrock simplified' : 'full'} schema`);
+    
+    super(
+      LSTool.Name,
+      'ReadFolder',
+      isBedrock ? 'Lists files in a directory' : 'Lists the names of files and subdirectories directly within a specified directory path. Can optionally ignore entries matching provided glob patterns. IMPORTANT: Always provide an absolute path - for the current working directory, use the full absolute path of the current directory.',
+      Kind.Search,
+      parameterSchema,
     );
   }
 
@@ -327,8 +348,10 @@ export class LSTool extends BaseDeclarativeTool<LSToolParams, ToolResult> {
   protected override validateToolParamValues(
     params: LSToolParams,
   ): string | null {
+    // Convert relative paths to absolute paths before validation
     if (!path.isAbsolute(params.path)) {
-      return `Path must be absolute: ${params.path}`;
+      params.path = path.resolve(params.path);
+      console.log(`[LSTool] Converted relative path to absolute: ${params.path}`);
     }
 
     const workspaceContext = this.config.getWorkspaceContext();

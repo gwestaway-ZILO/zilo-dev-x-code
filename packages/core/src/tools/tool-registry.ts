@@ -200,6 +200,7 @@ export class ToolRegistry {
       }
     }
     this.tools.set(tool.name, tool);
+    
   }
 
   private removeDiscoveredTools(): void {

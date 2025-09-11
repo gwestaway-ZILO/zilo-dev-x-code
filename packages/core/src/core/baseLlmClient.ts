@@ -98,7 +98,29 @@ export class BaseLlmClient {
       // and not use responseJsonSchema which Claude doesn't support
       // Use compact JSON to reduce tokens
       const schemaString = JSON.stringify(schema);
-      const claudeJsonInstruction = `Return ONLY JSON: ${schemaString}`;
+      const claudeJsonInstruction = `<JSON_ONLY_MODE>
+CRITICAL INSTRUCTION: You MUST respond with ONLY a valid JSON object. NO explanatory text, NO reasoning, NO conversation, NO markdown, NO code blocks.
+
+REQUIRED SCHEMA: ${schemaString}
+
+EXAMPLE VALID RESPONSES:
+{"reasoning": "Brief explanation here", "next_speaker": "user"}
+{"reasoning": "Another explanation", "next_speaker": "model"}
+
+INVALID RESPONSES (DO NOT DO THIS):
+- Looking at my response...
+- Based on the analysis...  
+- JSON code blocks
+- Any text before or after the JSON
+
+YOUR RESPONSE MUST:
+1. Start with { and end with }
+2. Be valid JSON parseable by JSON.parse()
+3. Match the exact schema above
+4. Contain NO other text whatsoever
+
+RESPOND WITH JSON ONLY NOW:
+</JSON_ONLY_MODE>`;
 
       // Prepend the JSON instruction to the last user message
       modifiedContents = [...contents];
@@ -229,6 +251,37 @@ export class BaseLlmClient {
     
     // For Claude models, be more aggressive about extracting JSON
     if (isClaudeModel) {
+      // If Claude completely ignored JSON instruction and returned conversational text,
+      // we need to handle this gracefully by creating a basic JSON response
+      if (!text.trim().startsWith('{') && !text.includes('{')) {
+        // This is pure conversational text, try to extract key information
+        // For next_speaker cases, analyze the conversational content
+        if (text.toLowerCase().includes('next') || text.toLowerCase().includes('speak') || 
+            text.toLowerCase().includes('user') || text.toLowerCase().includes('model')) {
+          
+          // Try to determine the correct next speaker from the conversational response
+          const userShouldSpeak = text.toLowerCase().includes('user should speak') ||
+                                  text.toLowerCase().includes('waiting for user') ||
+                                  text.toLowerCase().includes('decision: \'user\'') ||
+                                  text.toLowerCase().includes('pause expecting user');
+          
+          const modelShouldSpeak = text.toLowerCase().includes('model should speak') ||
+                                   text.toLowerCase().includes('model continues') ||
+                                   text.toLowerCase().includes('decision: \'model\'');
+          
+          const nextSpeaker = modelShouldSpeak ? "model" : "user";
+          const reasoning = userShouldSpeak ? "Analysis indicates user should respond" :
+                           modelShouldSpeak ? "Analysis indicates model should continue" :
+                           "Default: model response complete, awaiting user input";
+          
+          return JSON.stringify({
+            reasoning,
+            next_speaker: nextSpeaker
+          });
+        }
+        // For other cases, we can't recover - let the original error bubble up
+      }
+      
       // First try to find JSON at the end of the response (Claude often adds explanation first)
       const lastJsonMatch = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}(?!.*\{)/s);
       if (lastJsonMatch) {
@@ -244,6 +297,26 @@ export class BaseLlmClient {
           return extracted;
         } catch {
           // Try other extraction methods
+        }
+      }
+      
+      // Try to find any JSON object in the response
+      const anyJsonMatch = text.match(/\{[\s\S]*?\}/g);
+      if (anyJsonMatch) {
+        // Try each JSON-like match
+        for (const match of anyJsonMatch.reverse()) { // Start from the end
+          try {
+            JSON.parse(match);
+            if (match !== text) {
+              logMalformedJsonResponse(
+                this.config,
+                new MalformedJsonResponseEvent(model),
+              );
+            }
+            return match;
+          } catch {
+            continue;
+          }
         }
       }
     }

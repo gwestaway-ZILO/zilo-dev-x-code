@@ -563,9 +563,19 @@ export class CoreToolScheduler {
     tool: AnyDeclarativeTool,
     args: object,
   ): AnyToolInvocation | Error {
+    console.log(`[CORE SCHEDULER] buildInvocation called for tool: ${tool.name}`);
+    console.log(`[CORE SCHEDULER] Raw args received:`, JSON.stringify(args, null, 2));
+    console.log(`[CORE SCHEDULER] Args type:`, typeof args);
+    console.log(`[CORE SCHEDULER] Args constructor:`, args?.constructor?.name);
+    console.log(`[CORE SCHEDULER] Args keys:`, Object.keys(args || {}));
+    
+    // This is where the empty parameters are coming from!
     try {
-      return tool.build(args);
+      const result = tool.build(args);
+      console.log(`[CORE SCHEDULER] Successfully built invocation for ${tool.name}`);
+      return result;
     } catch (e) {
+      console.log(`[CORE SCHEDULER] Error building invocation for ${tool.name}:`, e);
       if (e instanceof Error) {
         return e;
       }

@@ -272,7 +272,20 @@ export class Turn {
         }
 
         // Handle function calls (requesting tool execution)
+        console.log(`[TURN] 🔍 Processing response:`, {
+          candidatesLength: resp.candidates?.length || 0,  
+          partsLength: resp.candidates?.[0]?.content?.parts?.length || 0,
+          parts: resp.candidates?.[0]?.content?.parts?.map(p => ({ 
+            text: p.text ? `${p.text.substring(0, 50)}...` : undefined,
+            functionCall: p.functionCall ? { name: p.functionCall.name, args: p.functionCall.args } : undefined,
+            hasOtherProps: Object.keys(p).filter(k => k !== 'text' && k !== 'functionCall').length > 0
+          }))
+        });
+        
         const functionCalls = resp.functionCalls ?? [];
+        console.log(`[TURN] 📞 Extracted functionCalls:`, functionCalls.map(fc => ({ name: fc.name, args: fc.args, id: fc.id })));
+        
+        
         for (const fnCall of functionCalls) {
           const event = this.handlePendingFunctionCall(fnCall);
           if (event) {
@@ -350,7 +363,25 @@ export class Turn {
       fnCall.id ??
       `${fnCall.name}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const name = fnCall.name || 'undefined_tool_name';
+    
+    // !!!ROOT CAUSE FOUND!!! This is where empty parameters {} are created
+    console.log(`[TURN] handlePendingFunctionCall for ${name}`);
+    console.log(`[TURN] Raw fnCall.args:`, JSON.stringify(fnCall.args, null, 2));
+    console.log(`[TURN] fnCall.args type:`, typeof fnCall.args);
+    console.log(`[TURN] fnCall.args is undefined:`, fnCall.args === undefined);
+    console.log(`[TURN] fnCall.args is null:`, fnCall.args === null);
+    console.log(`[TURN] fnCall.args is empty obj:`, fnCall.args && Object.keys(fnCall.args).length === 0);
+    
     const args = (fnCall.args || {}) as Record<string, unknown>;
+    
+    console.log(`[TURN] Final args after defaulting:`, JSON.stringify(args, null, 2));
+    console.log(`[TURN] Args keys:`, Object.keys(args));
+    
+    if (name === 'list_directory' && Object.keys(args).length === 0) {
+      console.log(`[TURN] ⚠️  CONFIRMED: Empty args {} created for list_directory tool!`);
+      console.log(`[TURN] ⚠️  This is the root cause of the validation failures!`);
+    }
+
 
     const toolCallRequest: ToolCallRequestInfo = {
       callId,

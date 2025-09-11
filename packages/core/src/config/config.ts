@@ -924,6 +924,7 @@ export class Config {
         isEnabled = false;
       }
 
+
       if (isEnabled) {
         registry.registerTool(new ToolClass(...args));
       }

@@ -179,6 +179,13 @@ export class GeminiChat {
     this.chatRecordingService.initialize();
   }
 
+  /**
+   * Get the config object for debug logging access
+   */
+  getConfig(): Config {
+    return this.config;
+  }
+
   setSystemInstruction(sysInstr: string) {
     this.generationConfig.systemInstruction = sysInstr;
   }

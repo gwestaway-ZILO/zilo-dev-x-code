@@ -174,6 +174,8 @@ export class GeminiClient {
   async setTools(): Promise<void> {
     const toolRegistry = this.config.getToolRegistry();
     const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    
+    
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
     this.getChat().setTools(tools);
   }
@@ -204,6 +206,8 @@ export class GeminiClient {
 
     const toolRegistry = this.config.getToolRegistry();
     const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    
+    
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
 
     const history: Content[] = [
@@ -486,6 +490,10 @@ export class GeminiClient {
 
     const loopDetected = await this.loopDetector.turnStarted(signal);
     if (loopDetected) {
+      // Clear chat history to break the loop and start fresh
+      console.log('Loop detected at turn start - clearing chat history to start fresh');
+      this.getChat().clearHistory();
+      this.loopDetector.reset(prompt_id);
       yield { type: GeminiEventType.LoopDetected };
       return turn;
     }
@@ -493,6 +501,10 @@ export class GeminiClient {
     const resultStream = turn.run(request, signal);
     for await (const event of resultStream) {
       if (this.loopDetector.addAndCheck(event)) {
+        // Clear chat history to break the loop and start fresh
+        console.log('Loop detected - clearing chat history to start fresh');
+        this.getChat().clearHistory();
+        this.loopDetector.reset(prompt_id);
         yield { type: GeminiEventType.LoopDetected };
         return turn;
       }

@@ -56,11 +56,28 @@ export const initCommand: SlashCommand = {
     return {
       type: 'submit_prompt',
       content: `
-You are an AI agent that brings the power of Gemini directly into the terminal. Your task is to analyze the current directory and generate a comprehensive ${contextFileName} file to be used as instructional context for future interactions with the AI assistant.
+**🚨 MANDATORY TOOL USAGE REQUIRED 🚨**
 
-**CRITICAL INSTRUCTION:** After analyzing the project, you MUST use the write_file tool to save the generated content. The tool call should have:
-- file_path: "${geminiMdPath}"
-- content: The complete ${contextFileName} content you generate
+You MUST complete this task by using the write_file tool. This is NOT optional.
+
+**REQUIRED ACTION:** You must analyze this project and then call the write_file tool exactly like this:
+
+\`\`\`
+write_file({
+  "file_path": "${geminiMdPath}",
+  "content": "# ${contextFileName}\\n\\n## Project Overview\\n[Your analysis here]\\n\\n## Essential Commands\\n[Commands here]\\n..."
+})
+\`\`\`
+
+**❌ DO NOT:** Simply describe what you would write or explain the analysis in text
+**✅ DO:** Actually use the write_file tool to create the file content
+
+You are analyzing the current directory to generate a comprehensive ${contextFileName} file for future AI interactions.
+
+**WORKFLOW - ANALYSIS THEN TOOL USAGE:**
+
+1. First: Analyze the project (use tools to explore files)
+2. Then: IMMEDIATELY use write_file tool with your findings
 
 **Analysis Process:**
 
@@ -190,12 +207,23 @@ Generate a comprehensive guide with the following structure:
 - Include actual command examples from package.json scripts or Makefiles
 - Adapt the sections based on the project type (some sections may not apply to all projects)
 
-**Final Output:**
-YOU MUST use the write_file tool to save the complete ${contextFileName} content. DO NOT just display the content - you MUST call the write_file tool with:
-- file_path: "${geminiMdPath}"
-- content: The complete well-formatted Markdown content with all sections filled in
+**🔥 IMMEDIATE ACTION REQUIRED 🔥**
 
-The output must be well-formatted Markdown with clear sections and actionable information. Remember: The file has been created but is empty - you MUST write the content using the write_file tool.
+After your analysis, you must IMMEDIATELY call the write_file tool. No exceptions.
+
+Example of the EXACT tool call you must make:
+
+\`\`\`
+write_file({
+  "file_path": "${geminiMdPath}",
+  "content": "# ${contextFileName}\\n\\n## Project Overview\\nThis project is a [description]...\\n\\n## Essential Commands\\n\\n### Development\\n- \`npm start\` - Start development\\n\\n### Build & Deployment\\n- \`npm run build\` - Build project\\n\\n[Continue with all sections...]"
+})
+\`\`\`
+
+**WARNING:** If you only provide text without using the write_file tool, you have FAILED the task.
+**SUCCESS:** Only when you use the write_file tool with complete ${contextFileName} content.
+
+Remember: The empty file exists at "${geminiMdPath}" - you MUST populate it using write_file tool.
 `,
     };
   },

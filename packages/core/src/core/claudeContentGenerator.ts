@@ -26,14 +26,23 @@ export class ClaudeContentGenerator implements ContentGenerator {
   private model: string;
 
   constructor(apiKey: string, model: string) {
+    console.log(`[CLAUDE-GEN] 🚀 ClaudeContentGenerator constructor called`);
+    console.log(`[CLAUDE-GEN] Model: ${model}`);
+    console.log(`[CLAUDE-GEN] API Key: ${apiKey ? '***set***' : 'undefined'}`);
+    
     this.anthropic = new Anthropic({ apiKey });
     this.model = model;
+    
+    console.log(`[CLAUDE-GEN] ✅ ClaudeContentGenerator initialized`);
   }
 
   async generateContent(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
+    console.log(`[CLAUDE-GEN] 📞 generateContent called`);
+    console.log(`[CLAUDE-GEN] UserPromptId: ${userPromptId}`);
+    
     const contents = this.normalizeContents(request.contents);
     const messages = this.convertToClaudeMessages(contents);
     
@@ -48,12 +57,21 @@ export class ClaudeContentGenerator implements ContentGenerator {
       }
     }
     
+    // Extract and convert tools from request config
+    const tools = this.extractAndConvertTools(request);
+    
+    console.log(`[CLAUDE GENERATOR] Sending request with ${tools?.length || 0} tools`);
+    if (tools && tools.length > 0) {
+      console.log('[CLAUDE GENERATOR] Tools:', tools.map(t => ({ name: t.name, description: t.description })));
+    }
+
     const response = await this.anthropic.messages.create({
       model: this.model,
       max_tokens: request.config?.maxOutputTokens || 8192,
       temperature: request.config?.temperature,
       system: systemMessage,
       messages,
+      ...(tools && tools.length > 0 && { tools }),
     });
 
     return this.convertToGeminiResponse(response);
@@ -77,6 +95,9 @@ export class ClaudeContentGenerator implements ContentGenerator {
       }
     }
     
+    // Extract and convert tools from request config
+    const tools = this.extractAndConvertTools(request);
+    
     const stream = await this.anthropic.messages.create({
       model: this.model,
       max_tokens: request.config?.maxOutputTokens || 8192,
@@ -84,6 +105,7 @@ export class ClaudeContentGenerator implements ContentGenerator {
       system: systemMessage,
       messages,
       stream: true,
+      ...(tools && tools.length > 0 && { tools }),
     });
 
     return this.convertStreamToGeminiFormat(stream);
@@ -341,5 +363,57 @@ export class ClaudeContentGenerator implements ContentGenerator {
       }
     }
     return text.trim();
+  }
+
+  private extractAndConvertTools(request: GenerateContentParameters): Anthropic.Tool[] | undefined {
+    if (!request.config?.tools || !Array.isArray(request.config.tools)) {
+      return undefined;
+    }
+
+    const tools: Anthropic.Tool[] = [];
+    
+    for (const tool of request.config.tools) {
+      let name: string;
+      let description: string;
+      let parameters: any;
+
+      // Use type assertion to handle the ToolUnion type
+      const toolAny = tool as any;
+
+      if (toolAny.functionDeclarations && Array.isArray(toolAny.functionDeclarations) && toolAny.functionDeclarations.length > 0) {
+        // Gemini format: { functionDeclarations: [{ name, description, parametersJsonSchema }] }
+        const funcDecl = toolAny.functionDeclarations[0];
+        name = funcDecl.name;
+        description = funcDecl.description || '';
+        parameters = funcDecl.parametersJsonSchema || funcDecl.parameters || {};
+      } else {
+        // Direct tool format: { name, description, parameters }
+        name = toolAny.name;
+        description = toolAny.description || '';
+        parameters = toolAny.parameters || {};
+      }
+
+      if (!name) {
+        console.warn('[CLAUDE GENERATOR] Tool is missing name, skipping:', tool);
+        continue;
+      }
+
+      // Convert to Claude's tool format
+      const claudeTool: Anthropic.Tool = {
+        name,
+        description,
+        input_schema: {
+          type: 'object',
+          properties: parameters.properties || {},
+          required: parameters.required || [],
+          ...parameters
+        }
+      };
+
+      console.log(`[CLAUDE GENERATOR] Converted tool "${name}" with schema:`, claudeTool.input_schema);
+      tools.push(claudeTool);
+    }
+
+    return tools.length > 0 ? tools : undefined;
   }
 }

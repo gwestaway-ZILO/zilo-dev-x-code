@@ -141,6 +141,12 @@ export async function createContentGenerator(
   gcConfig: Config,
   sessionId?: string,
 ): Promise<ContentGenerator> {
+  console.log(`[CONTENT-GEN] 🔍 Creating ContentGenerator...`);
+  console.log(`[CONTENT-GEN] AuthType: ${config.authType}`);
+  console.log(`[CONTENT-GEN] Model: ${config.model}`);
+  console.log(`[CONTENT-GEN] API Key: ${config.apiKey ? '***set***' : 'undefined'}`);
+  console.log(`[CONTENT-GEN] VertexAI: ${config.vertexai}`);
+  
   const version = process.env['CLI_VERSION'] || process.version;
   const userAgent = `GeminiCLI/${version} (${process.platform}; ${process.arch})`;
   const baseHeaders: Record<string, string> = {
@@ -187,6 +193,7 @@ export async function createContentGenerator(
   }
 
   if (config.authType === AuthType.USE_CLAUDE_API) {
+    console.log(`[CONTENT-GEN] ✅ Creating ClaudeContentGenerator`);
     if (!config.apiKey) {
       throw new Error('ANTHROPIC_API_KEY is required for Claude API');
     }
@@ -195,6 +202,7 @@ export async function createContentGenerator(
   }
 
   if (config.authType === AuthType.USE_AWS_BEDROCK) {
+    console.log(`[CONTENT-GEN] ✅ Creating BedrockContentGenerator`);
     const awsRegion = process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'];
     const bedrockGenerator = new BedrockContentGenerator(config.model, awsRegion);
     return new LoggingContentGenerator(bedrockGenerator, gcConfig);
