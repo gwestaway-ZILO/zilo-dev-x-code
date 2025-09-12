@@ -41,7 +41,7 @@ export const Composer = () => {
 
   // Build footer props from context values
   const footerProps: Omit<FooterProps, 'vimMode'> = {
-    model: config.getModel(),
+    model: config.getEffectiveModel(),
     targetDir: config.getTargetDir(),
     debugMode: config.getDebugMode(),
     branchName: uiState.branchName,
@@ -54,6 +54,7 @@ export const Composer = () => {
     promptTokenCount: uiState.sessionStats.lastPromptTokenCount,
     nightly: uiState.nightly,
     isTrustedFolder: uiState.isTrustedFolder,
+    currentAgent: config.getCurrentAgent(),
   };
 
   return (
@@ -129,6 +130,7 @@ export const Composer = () => {
                 mcpServers={config.getMcpServers()}
                 blockedMcpServers={config.getBlockedMcpServers()}
                 showToolDescriptions={uiState.showToolDescriptions}
+                currentAgent={config.getCurrentAgent()}
               />
             )
           )}

@@ -7,7 +7,7 @@
 import type React from 'react';
 import { Box, Text } from 'ink';
 import { Colors } from '../colors.js';
-import { type IdeContext, type MCPServerConfig } from '@google/gemini-cli-core';
+import { type IdeContext, type MCPServerConfig, type AgentDefinition } from '@google/gemini-cli-core';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { isNarrowWidth } from '../utils/isNarrowWidth.js';
 
@@ -18,6 +18,7 @@ interface ContextSummaryDisplayProps {
   blockedMcpServers?: Array<{ name: string; extensionName: string }>;
   showToolDescriptions?: boolean;
   ideContext?: IdeContext;
+  currentAgent?: AgentDefinition;
 }
 
 export const ContextSummaryDisplay: React.FC<ContextSummaryDisplayProps> = ({
@@ -27,6 +28,7 @@ export const ContextSummaryDisplay: React.FC<ContextSummaryDisplayProps> = ({
   blockedMcpServers,
   showToolDescriptions,
   ideContext,
+  currentAgent,
 }) => {
   const { columns: terminalWidth } = useTerminalSize();
   const isNarrow = isNarrowWidth(terminalWidth);
@@ -35,6 +37,7 @@ export const ContextSummaryDisplay: React.FC<ContextSummaryDisplayProps> = ({
   const openFileCount = ideContext?.workspaceState?.openFiles?.length ?? 0;
 
   if (
+    !currentAgent &&
     geminiMdFileCount === 0 &&
     mcpServerCount === 0 &&
     blockedMcpServerCount === 0 &&
@@ -94,7 +97,15 @@ export const ContextSummaryDisplay: React.FC<ContextSummaryDisplayProps> = ({
     return text;
   })();
 
-  const summaryParts = [openFilesText, geminiMdText, mcpText].filter(Boolean);
+  const agentText = (() => {
+    if (!currentAgent) {
+      return '';
+    }
+    const modelInfo = currentAgent.model ? ` (${currentAgent.model})` : '';
+    return `Agent: ${currentAgent.name}${modelInfo}`;
+  })();
+
+  const summaryParts = [agentText, openFilesText, geminiMdText, mcpText].filter(Boolean);
 
   if (isNarrow) {
     return (

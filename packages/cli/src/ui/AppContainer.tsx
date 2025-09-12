@@ -122,15 +122,20 @@ export const AppContainer = (props: AppContainerProps) => {
     config.isTrustedFolder(),
   );
 
-  // Helper to determine the effective model, considering the fallback state.
+  // Helper to determine the effective model, considering the fallback state and active agent.
   const getEffectiveModel = useCallback(() => {
     if (config.isInFallbackMode()) {
       return DEFAULT_GEMINI_FLASH_MODEL;
     }
-    return config.getModel();
+    return config.getEffectiveModel();
   }, [config]);
 
   const [currentModel, setCurrentModel] = useState(getEffectiveModel());
+
+  // Update model when config changes (including agent changes)
+  useEffect(() => {
+    setCurrentModel(getEffectiveModel());
+  }, [getEffectiveModel]);
 
   const [userTier, setUserTier] = useState<UserTierId | undefined>(undefined);
 

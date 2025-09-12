@@ -172,8 +172,7 @@ export class GeminiClient {
   }
 
   async setTools(): Promise<void> {
-    const toolRegistry = this.config.getToolRegistry();
-    const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    const toolDeclarations = this.config.getEffectiveFunctionDeclarations();
     
     
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
@@ -204,8 +203,7 @@ export class GeminiClient {
     this.hasFailedCompressionAttempt = false;
     const envParts = await getEnvironmentContext(this.config);
 
-    const toolRegistry = this.config.getToolRegistry();
-    const toolDeclarations = toolRegistry.getFunctionDeclarations();
+    const toolDeclarations = this.config.getEffectiveFunctionDeclarations();
     
     
     const tools: Tool[] = [{ functionDeclarations: toolDeclarations }];
@@ -223,8 +221,8 @@ export class GeminiClient {
     ];
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
-      const model = this.config.getModel();
+      const systemInstruction = getCoreSystemPrompt(userMemory, this.config);
+      const model = this.config.getEffectiveModel();
       const generateContentConfigWithThinking = isThinkingSupported(model)
         ? {
             ...this.generateContentConfig,
@@ -451,7 +449,7 @@ export class GeminiClient {
     }
 
     // Track the original model from the first call to detect model switching
-    const initialModel = originalModel || this.config.getModel();
+    const initialModel = originalModel || this.config.getEffectiveModel();
 
     const compressed = await this.tryCompressChat(prompt_id);
 
@@ -515,7 +513,7 @@ export class GeminiClient {
     }
     if (!turn.pendingToolCalls.length && signal && !signal.aborted) {
       // Check if model was switched during the call (likely due to quota error)
-      const currentModel = this.config.getModel();
+      const currentModel = this.config.getEffectiveModel();
       if (currentModel !== initialModel) {
         // Model was switched (likely due to quota error fallback)
         // Don't continue with recursive call to prevent unwanted Flash execution
@@ -530,7 +528,7 @@ export class GeminiClient {
         this.getChat(),
         this,
         signal,
-        this.config.getModel(),
+        this.config.getEffectiveModel(),
       );
       logNextSpeakerCheck(
         this.config,
@@ -567,7 +565,7 @@ export class GeminiClient {
 
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
+      const systemInstruction = getCoreSystemPrompt(userMemory, this.config);
       const requestConfig = {
         abortSignal,
         ...this.generateContentConfig,
@@ -811,7 +809,7 @@ export class GeminiClient {
 
     try {
       const userMemory = this.config.getUserMemory();
-      const systemInstruction = getCoreSystemPrompt(userMemory);
+      const systemInstruction = getCoreSystemPrompt(userMemory, this.config);
 
       const requestConfig: GenerateContentConfig = {
         abortSignal,
@@ -919,7 +917,7 @@ export class GeminiClient {
       };
     }
 
-    const model = this.config.getModel();
+    const model = this.config.getEffectiveModel();
 
     const { totalTokens: originalTokenCount } =
       await this.getContentGeneratorOrFail().countTokens({
@@ -998,7 +996,7 @@ export class GeminiClient {
     const { totalTokens: newTokenCount } =
       await this.getContentGeneratorOrFail().countTokens({
         // model might change after calling `sendMessage`, so we get the newest value from config
-        model: this.config.getModel(),
+        model: this.config.getEffectiveModel(),
         contents: chat.getHistory(),
       });
     if (newTokenCount === undefined) {

@@ -18,6 +18,7 @@ import { WriteFileTool } from '../tools/write-file.js';
 import process from 'node:process';
 import { isGitRepository } from '../utils/gitUtils.js';
 import { MemoryTool, GEMINI_CONFIG_DIR } from '../tools/memoryTool.js';
+import type { Config } from '../config/config.js';
 
 export function resolvePathFromEnv(envVar?: string): {
   isSwitch: boolean;
@@ -69,7 +70,7 @@ export function resolvePathFromEnv(envVar?: string): {
   };
 }
 
-export function getCoreSystemPrompt(userMemory?: string): string {
+export function getCoreSystemPrompt(userMemory?: string, config?: Config): string {
   // A flag to indicate whether the system prompt override is active.
   let systemMdEnabled = false;
   // The default path for the system prompt file. This can be overridden.
@@ -346,12 +347,18 @@ Your core function is efficient and safe assistance. Balance extreme conciseness
     fs.writeFileSync(writePath, basePrompt);
   }
 
+  // Check if there's an active agent and use its effective system prompt
+  let effectivePrompt = basePrompt;
+  if (config && typeof config.getEffectiveSystemPrompt === 'function') {
+    effectivePrompt = config.getEffectiveSystemPrompt(basePrompt);
+  }
+
   const memorySuffix =
     userMemory && userMemory.trim().length > 0
       ? `\n\n---\n\n${userMemory.trim()}`
       : '';
 
-  return `${basePrompt}${memorySuffix}`;
+  return `${effectivePrompt}${memorySuffix}`;
 }
 
 /**

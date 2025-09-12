@@ -7,7 +7,7 @@
 import type React from 'react';
 import { Box, Text } from 'ink';
 import { theme } from '../semantic-colors.js';
-import { shortenPath, tildeifyPath } from '@google/gemini-cli-core';
+import { shortenPath, tildeifyPath, type AgentDefinition } from '@google/gemini-cli-core';
 import { ConsoleSummaryDisplay } from './ConsoleSummaryDisplay.js';
 import process from 'node:process';
 import path from 'node:path';
@@ -33,6 +33,7 @@ export interface FooterProps {
   nightly: boolean;
   vimMode?: string;
   isTrustedFolder?: boolean;
+  currentAgent?: AgentDefinition;
 }
 
 export const Footer: React.FC<FooterProps> = ({
@@ -49,6 +50,7 @@ export const Footer: React.FC<FooterProps> = ({
   nightly,
   vimMode,
   isTrustedFolder,
+  currentAgent,
 }) => {
   const { columns: terminalWidth } = useTerminalSize();
 
@@ -127,6 +129,11 @@ export const Footer: React.FC<FooterProps> = ({
         <Box alignItems="center">
           <Text color={theme.text.accent}>
             {isNarrow ? '' : ' '}
+            {currentAgent && (
+              <>
+                <Text color={theme.text.secondary}>[{currentAgent.name}] </Text>
+              </>
+            )}
             {model}{' '}
             <ContextUsageDisplay
               promptTokenCount={promptTokenCount}

@@ -72,6 +72,9 @@ import { FileExclusions } from '../utils/ignorePatterns.js';
 import type { EventEmitter } from 'node:events';
 import type { UserTierId } from '../code_assist/types.js';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
+import { AgentLoader } from '../agents/agentLoader.js';
+import type { AgentDefinition } from '../agents/types.js';
+import type { FunctionDeclaration } from '@google/genai';
 
 export enum ApprovalMode {
   DEFAULT = 'default',
@@ -310,6 +313,8 @@ export class Config {
   private readonly fileExclusions: FileExclusions;
   private readonly eventEmitter?: EventEmitter;
   private readonly useSmartEdit: boolean;
+  private agentLoader: AgentLoader;
+  private currentAgent: AgentDefinition | undefined;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -393,6 +398,8 @@ export class Config {
     this.enablePromptCompletion = params.enablePromptCompletion ?? false;
     this.fileExclusions = new FileExclusions(this);
     this.eventEmitter = params.eventEmitter;
+    this.agentLoader = new AgentLoader(this.targetDir);
+    this.currentAgent = undefined;
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -966,6 +973,78 @@ export class Config {
 
     await registry.discoverAllTools();
     return registry;
+  }
+
+  /**
+   * Gets the agent loader instance
+   */
+  getAgentLoader(): AgentLoader {
+    return this.agentLoader;
+  }
+
+  /**
+   * Gets the currently active agent
+   */
+  getCurrentAgent(): AgentDefinition | undefined {
+    return this.currentAgent;
+  }
+
+  /**
+   * Sets the current agent for the session
+   */
+  setCurrentAgent(agent: AgentDefinition): void {
+    this.currentAgent = agent;
+  }
+
+  /**
+   * Clears the current agent (returns to default behavior)
+   */
+  clearCurrentAgent(): void {
+    this.currentAgent = undefined;
+  }
+
+  /**
+   * Gets the effective system prompt, including agent prompt if active
+   */
+  getEffectiveSystemPrompt(baseSystemPrompt?: string): string {
+    if (!this.currentAgent) {
+      return baseSystemPrompt || '';
+    }
+
+    // If an agent is active, use its prompt as the primary system prompt
+    let effectivePrompt = this.currentAgent.prompt;
+
+    // If there's a base system prompt, append it after the agent prompt
+    if (baseSystemPrompt) {
+      effectivePrompt += '\n\n' + baseSystemPrompt;
+    }
+
+    return effectivePrompt;
+  }
+
+  /**
+   * Gets the effective model, using agent model if specified
+   */
+  getEffectiveModel(): string {
+    return this.currentAgent?.model || this.model;
+  }
+
+  /**
+   * Gets filtered tools for the current agent
+   */
+  getAgentFilteredTools(): string[] | undefined {
+    return this.currentAgent?.tools;
+  }
+
+  /**
+   * Gets function declarations, filtered by agent tools if an agent is active
+   */
+  getEffectiveFunctionDeclarations(): FunctionDeclaration[] {
+    const agentTools = this.getAgentFilteredTools();
+    if (agentTools && agentTools.length > 0) {
+      return this.toolRegistry.getFunctionDeclarationsFiltered(agentTools);
+    }
+    return this.toolRegistry.getFunctionDeclarations();
   }
 }
 // Export model constants for use in CLI
