@@ -75,6 +75,7 @@ import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import { AgentLoader } from '../agents/agentLoader.js';
 import type { AgentDefinition } from '../agents/types.js';
 import type { FunctionDeclaration } from '@google/genai';
+import { DevXSettingsLoader, type AgentSettings } from './settings.js';
 
 export enum ApprovalMode {
   DEFAULT = 'default',
@@ -315,6 +316,7 @@ export class Config {
   private readonly useSmartEdit: boolean;
   private agentLoader: AgentLoader;
   private currentAgent: AgentDefinition | undefined;
+  private devxSettingsLoader: DevXSettingsLoader;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -400,6 +402,7 @@ export class Config {
     this.eventEmitter = params.eventEmitter;
     this.agentLoader = new AgentLoader(this.targetDir);
     this.currentAgent = undefined;
+    this.devxSettingsLoader = new DevXSettingsLoader(this.targetDir);
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -473,6 +476,11 @@ export class Config {
 
     // Reset the session flag since we're explicitly changing auth and using default model
     this.inFallbackMode = false;
+    
+    // Update config model to match the content generator model when using Claude/Bedrock
+    if (authMethod === AuthType.USE_AWS_BEDROCK || authMethod === AuthType.USE_CLAUDE_API) {
+      this.setModel(newContentGeneratorConfig.model);
+    }
   }
 
   getUserTier(): UserTierId | undefined {
@@ -1026,7 +1034,12 @@ export class Config {
    * Gets the effective model, using agent model if specified
    */
   getEffectiveModel(): string {
-    return this.currentAgent?.model || this.model;
+    // Priority: agent model > content generator config model > initial model
+    const effectiveModel = this.currentAgent?.model || this.contentGeneratorConfig?.model || this.model;
+    if (this.debugMode) {
+      console.log('[DEBUG] config.getEffectiveModel() - currentAgent?.model:', this.currentAgent?.model, 'contentGeneratorConfig?.model:', this.contentGeneratorConfig?.model, 'this.model:', this.model, 'returning:', effectiveModel);
+    }
+    return effectiveModel;
   }
 
   /**
@@ -1045,6 +1058,37 @@ export class Config {
       return this.toolRegistry.getFunctionDeclarationsFiltered(agentTools);
     }
     return this.toolRegistry.getFunctionDeclarations();
+  }
+
+  /**
+   * Gets DevX-specific settings from .devx/settings.json files
+   */
+  getDevXSettings(): AgentSettings | undefined {
+    const devxSettings = this.devxSettingsLoader.loadDevXSettings();
+    return devxSettings.agents;
+  }
+
+  /**
+   * Gets the DevX settings loader instance
+   */
+  getDevXSettingsLoader(): DevXSettingsLoader {
+    return this.devxSettingsLoader;
+  }
+
+  /**
+   * Gets the default agent from DevX settings
+   */
+  getDefaultAgentFromSettings(): string | undefined {
+    const agentSettings = this.getDevXSettings();
+    return agentSettings?.defaultAgent;
+  }
+
+  /**
+   * Checks if auto-activation of agents is enabled
+   */
+  isAgentAutoActivationEnabled(): boolean {
+    const agentSettings = this.getDevXSettings();
+    return agentSettings?.autoActivate ?? false;
   }
 }
 // Export model constants for use in CLI

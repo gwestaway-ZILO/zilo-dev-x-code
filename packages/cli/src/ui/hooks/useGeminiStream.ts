@@ -153,6 +153,10 @@ export const useGeminiStream = (
   );
 
   const loopDetectedRef = useRef(false);
+  
+  // Content deduplication tracking (similar to nonInteractiveCli.ts)
+  const cumulativeContentRef = useRef<string>('');
+  const seenContentRef = useRef<Set<string>>(new Set());
 
   const onExec = useCallback(async (done: Promise<void>) => {
     setIsResponding(true);
@@ -393,6 +397,24 @@ export const useGeminiStream = (
         // Prevents additional output after a user initiated cancel.
         return '';
       }
+      
+      // Content deduplication logic (similar to nonInteractiveCli.ts)
+      // Check if this is a complete duplicate of cumulative content
+      if (eventValue === cumulativeContentRef.current) {
+        // Skip complete duplicate responses
+        return currentGeminiMessageBuffer;
+      }
+      
+      // Check if this chunk has already been seen
+      if (seenContentRef.current.has(eventValue)) {
+        // Skip individual duplicate chunks
+        return currentGeminiMessageBuffer;
+      }
+      
+      // Track this new content
+      seenContentRef.current.add(eventValue);
+      cumulativeContentRef.current += eventValue;
+      
       let newGeminiMessageBuffer = currentGeminiMessageBuffer + eventValue;
       if (
         pendingHistoryItemRef.current?.type !== 'gemini' &&
@@ -697,6 +719,10 @@ export const useGeminiStream = (
       if (!options?.isContinuation) {
         setModelSwitchedFromQuotaError(false);
         config.setQuotaErrorOccurred(false);
+        
+        // Reset content deduplication tracking for new queries
+        cumulativeContentRef.current = '';
+        seenContentRef.current.clear();
       }
 
       abortControllerRef.current = new AbortController();

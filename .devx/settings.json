@@ -1,0 +1,36 @@
+{
+  "tools": {
+    "allowed": [
+      "read_file",
+      "list_directory", 
+      "search_file_content",
+      "write_file",
+      "edit_file",
+      "run_shell_command(git *)",
+      "run_shell_command(npm *)",
+      "web_fetch"
+    ],
+    "exclude": [
+      "run_shell_command(rm -rf *)",
+      "run_shell_command(sudo *)",
+      "write_file(/etc/**)",
+      "read_file(**/*.env)",
+      "read_file(./secrets/**)"
+    ]
+  },
+  "agents": {
+    "defaultAgent": "test-agent",
+    "autoActivate": false,
+    "maxAgents": 50,
+    "directory": "agents"
+  },
+  "mcpServers": {
+    "devx-tools": {
+      "command": "npx",
+      "args": ["@devx/mcp-server"],
+      "trust": true,
+      "description": "DevX-specific development tools",
+      "includeTools": ["code-review", "test-runner"]
+    }
+  }
+}

@@ -124,10 +124,26 @@ export const AppContainer = (props: AppContainerProps) => {
 
   // Helper to determine the effective model, considering the fallback state and active agent.
   const getEffectiveModel = useCallback(() => {
-    if (config.isInFallbackMode()) {
+    const effectiveModel = config.getEffectiveModel();
+    const isInFallback = config.isInFallbackMode();
+    
+    // Debug logging to understand what's happening
+    if (config.getDebugMode()) {
+      console.log('[DEBUG] Model display - effectiveModel:', effectiveModel, 'isInFallback:', isInFallback);
+    }
+    
+    // Only use fallback for Gemini models, not for Claude/Bedrock
+    if (isInFallback && !effectiveModel.toLowerCase().includes('claude')) {
+      if (config.getDebugMode()) {
+        console.log('[DEBUG] Using fallback model:', DEFAULT_GEMINI_FLASH_MODEL);
+      }
       return DEFAULT_GEMINI_FLASH_MODEL;
     }
-    return config.getEffectiveModel();
+    
+    if (config.getDebugMode()) {
+      console.log('[DEBUG] Using effective model:', effectiveModel);
+    }
+    return effectiveModel;
   }, [config]);
 
   const [currentModel, setCurrentModel] = useState(getEffectiveModel());

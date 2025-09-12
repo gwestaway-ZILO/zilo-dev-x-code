@@ -81,8 +81,11 @@ export function createContentGeneratorConfig(
     // If using Claude auth, use Claude model (ignore any Gemini model setting)
     effectiveModel = DEFAULT_CLAUDE_MODEL;
   } else if (authType === AuthType.USE_AWS_BEDROCK) {
-    // If using Bedrock auth, use effective model (may be agent-specified) or default Bedrock model
-    effectiveModel = config.getEffectiveModel() || DEFAULT_BEDROCK_MODEL;
+    // If using Bedrock auth, use effective model only if it's a Claude model, otherwise use default Bedrock model
+    const configModel = config.getEffectiveModel();
+    effectiveModel = (configModel && configModel.toLowerCase().includes('claude')) 
+      ? configModel 
+      : DEFAULT_BEDROCK_MODEL;
   } else {
     // For other auth types, use config model or default Gemini model
     effectiveModel = config.getEffectiveModel() || DEFAULT_GEMINI_MODEL;
