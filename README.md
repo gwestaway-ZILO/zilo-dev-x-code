@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/github/license/google-gemini/gemini-cli)](https://github.com/google-gemini/gemini-cli/blob/main/LICENSE)
 [![Version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/google-gemini/gemini-cli)
 
-![DevX CLI Screenshot](./docs/assets/gemini-screenshot.png)
+![DevX CLI Screenshot](./docs/assets/devx-screenshot.png)
 
 **DevX CLI** is an advanced, multi-provider AI command-line interface adapted from Google's Gemini CLI to support **Claude models via AWS Bedrock** and **Anthropic API**, alongside existing Gemini support. It features a powerful **Agent System** for specialized AI personas with controlled tool access - perfect for enterprise environments and focused workflows.
 
