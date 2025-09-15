@@ -27,6 +27,7 @@ import {
 } from '@google/genai';
 import type { ContentGenerator } from './contentGenerator.js';
 import { getErrorMessage } from '../utils/errors.js';
+import { PerformanceMonitor } from '../utils/performanceMonitor.js';
 
 // Bedrock inference profiles (these ARE the model IDs for cross-region inference)
 // The inference profile includes the region prefix (us. or global.) for routing
@@ -123,22 +124,26 @@ export class BedrockContentGenerator implements ContentGenerator {
   private client: BedrockRuntimeClient;
   private bedrockModelId: string;
   private static loggedProfiles = new Set<string>();
+  private static clientPool = new Map<string, BedrockRuntimeClient>();
+  private static toolSchemaCache = new Map<string, any[]>();
+  private debugMode: boolean;
+  private performanceMonitor: PerformanceMonitor;
 
-  constructor(model: string, region?: string) {
-    console.log(`[BEDROCK-GEN] 🚀 BedrockContentGenerator constructor called`);
-    console.log(`[BEDROCK-GEN] Model: ${model}`);
-    console.log(`[BEDROCK-GEN] Region: ${region || 'default'}`);
+  constructor(model: string, region?: string, debugMode = false) {
+    this.debugMode = debugMode;
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+    this.performanceMonitor.setDebugMode(debugMode);
+    
+    if (this.debugMode) {
+      console.log(`[BEDROCK-GEN] BedrockContentGenerator constructor - Model: ${model}, Region: ${region || 'default'}`);
+    }
     
     // Map the model name to the correct inference profile
-    // First check if it's already a full inference profile
     if (model.includes('.anthropic.')) {
       this.bedrockModelId = model;
     } else {
-      // Map user-friendly names to inference profiles
       this.bedrockModelId = BEDROCK_MODEL_IDS[model] || BEDROCK_MODEL_IDS['default'];
     }
-    
-    console.log(`[BEDROCK-GEN] Final model ID: ${this.bedrockModelId}`);
     
     // Only log each profile once to prevent duplicate messages
     if (!BedrockContentGenerator.loggedProfiles.has(this.bedrockModelId)) {
@@ -146,126 +151,99 @@ export class BedrockContentGenerator implements ContentGenerator {
       BedrockContentGenerator.loggedProfiles.add(this.bedrockModelId);
     }
     
-    // Initialize AWS Bedrock client
-    this.client = new BedrockRuntimeClient({
-      region: region || process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-east-1',
-    });
+    // Use connection pooling for AWS SDK clients
+    const clientKey = `${model}-${region || 'default'}`;
+    if (!BedrockContentGenerator.clientPool.has(clientKey)) {
+      BedrockContentGenerator.clientPool.set(clientKey, new BedrockRuntimeClient({
+        region: region || process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-east-1',
+        maxAttempts: 3,
+        requestHandler: {
+          connectionTimeout: 5000,
+          socketTimeout: 30000,
+        },
+      }));
+    }
+    this.client = BedrockContentGenerator.clientPool.get(clientKey)!;
     
-    console.log(`[BEDROCK-GEN] ✅ BedrockContentGenerator initialized`);
+    if (this.debugMode) {
+      console.log(`[BEDROCK-GEN] BedrockContentGenerator initialized`);
+    }
   }
 
   async generateContent(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
-    console.log(`[BEDROCK-GEN] 📞 generateContent called`);
-    console.log(`[BEDROCK-GEN] UserPromptId: ${userPromptId}`);
+    return this.performanceMonitor.timeAsync(
+      'bedrock-generate-content',
+      async () => {
+        if (this.debugMode) {
+          console.log(`[BEDROCK-GEN] generateContent called - UserPromptId: ${userPromptId}`);
+        }
+        
+        try {
+          const bedrockRequest = await this.performanceMonitor.timeAsync(
+            'bedrock-convert-request',
+            () => Promise.resolve(this.convertToBedrockRequest(request))
+          );
+          
+          if (this.debugMode && bedrockRequest.tools?.length) {
+            console.log(`Bedrock request with ${bedrockRequest.tools.length} tools:`, 
+              bedrockRequest.tools.map(t => t.name).join(', '));
+          }
+          
+          const input: InvokeModelCommandInput = {
+            modelId: this.bedrockModelId,
+            contentType: 'application/json',
+            accept: 'application/json',
+            body: JSON.stringify(bedrockRequest),
+          };
+
+          const command = new InvokeModelCommand(input);
+          const response = await this.performanceMonitor.timeAsync(
+            'bedrock-api-call',
+            () => this.client.send(command),
+            { model: this.bedrockModelId, messageCount: bedrockRequest.messages.length }
+          );
+          
+          const responseBody = await this.performanceMonitor.timeAsync(
+            'bedrock-parse-response',
+            () => this.parseResponseBody(response.body)
+          );
+          
+          if (this.debugMode) {
+            console.log(`Bedrock response - stop_reason: ${responseBody.stop_reason}, content types:`, 
+              responseBody.content.map(c => c.type).join(', '));
+            
+            const toolCalls = responseBody.content.filter(c => c.type === 'tool_use');
+            if (toolCalls.length > 0) {
+              console.log(`Claude made ${toolCalls.length} tool calls:`, toolCalls.map(tc => tc.name));
+            }
+          }
+          
+          return this.performanceMonitor.timeSync(
+            'bedrock-convert-response',
+            () => this.convertFromBedrockResponse(responseBody)
+          );
+        } catch (error) {
+          throw new Error(`Bedrock API error: ${getErrorMessage(error)}`);
+        }
+      },
+      { userPromptId, model: this.bedrockModelId }
+    );
+  }
+
+  private async parseResponseBody(body: Uint8Array | undefined): Promise<BedrockResponse> {
+    if (!body) {
+      throw new Error('No response body from Bedrock');
+    }
     
     try {
-      const bedrockRequest = this.convertToBedrockRequest(request);
-      
-      // Log tool information for debugging
-      if (bedrockRequest.tools && bedrockRequest.tools.length > 0) {
-        console.log(`Bedrock request with ${bedrockRequest.tools.length} tools:`, 
-          bedrockRequest.tools.map(t => t.name).join(', '));
-      }
-      
-      // Debug: Log the complete request being sent to Bedrock
-      console.log('=== COMPLETE BEDROCK REQUEST ===');
-      console.log('System prompt:', bedrockRequest.system?.substring(0, 200) + '...');
-      console.log('Messages count:', bedrockRequest.messages.length);
-      console.log('Tools count:', bedrockRequest.tools?.length || 0);
-      if (bedrockRequest.tools && bedrockRequest.tools.length > 0) {
-        console.log('=== TOOLS SENT TO CLAUDE ===');
-        bedrockRequest.tools.forEach((tool, idx) => {
-          console.log(`Tool ${idx + 1}:`, {
-            name: tool.name,
-            description: tool.description,
-            input_schema: tool.input_schema
-          });
-        });
-      }
-      console.log('=== END BEDROCK REQUEST ===');
-      
-      // Log message structure for debugging tool_use/tool_result pairing
-      console.log('Bedrock request messages:');
-      bedrockRequest.messages.forEach((msg, index) => {
-        console.log(`Message ${index} (${msg.role}):`, {
-          contentLength: Array.isArray(msg.content) ? msg.content.length : 1,
-          contentTypes: Array.isArray(msg.content) ? msg.content.map((c: any) => c.type).join(', ') : 'text',
-          hasToolUse: Array.isArray(msg.content) ? msg.content.some((c: any) => c.type === 'tool_use') : false,
-          hasToolResult: Array.isArray(msg.content) ? msg.content.some((c: any) => c.type === 'tool_result') : false,
-        });
-        
-        // If this message has tool_use or tool_result, log the IDs
-        if (Array.isArray(msg.content)) {
-          msg.content.forEach((part: any, partIndex: number) => {
-            if (part.type === 'tool_use') {
-              console.log(`  Part ${partIndex}: tool_use ID=${part.id}, name=${part.name}`);
-            } else if (part.type === 'tool_result') {
-              console.log(`  Part ${partIndex}: tool_result tool_use_id=${part.tool_use_id}`);
-            }
-          });
-        }
-      });
-      
-      // Log the complete tool schema being sent to Claude
-      if (bedrockRequest.tools && bedrockRequest.tools.length > 0) {
-        console.log('Complete tool schemas sent to Claude:');
-        bedrockRequest.tools.forEach(tool => {
-          console.log(`Tool: ${tool.name}`);
-          console.log(`  Required fields:`, tool.input_schema['required']);
-          console.log(`  Properties:`, Object.keys(tool.input_schema['properties'] || {}));
-        });
-      }
-      
-      const input: InvokeModelCommandInput = {
-        modelId: this.bedrockModelId,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify(bedrockRequest),
-      };
-
-      const command = new InvokeModelCommand(input);
-      console.log('🚀 About to send Bedrock API request...');
-      const response = await this.client.send(command);
-      console.log('✅ Received Bedrock API response:', response ? 'Success' : 'Failed');
-      
-      const responseBody = JSON.parse(new TextDecoder().decode(response.body)) as BedrockResponse;
-      
-      // Log response details for debugging
-      console.log(`Bedrock response - stop_reason: ${responseBody.stop_reason}, content types:`, 
-        responseBody.content.map(c => c.type).join(', '));
-      
-      // Debug: Log the complete Bedrock response to see what Claude is actually sending
-      console.log('=== COMPLETE BEDROCK RESPONSE ===');
-      console.log(JSON.stringify(responseBody, null, 2));
-      console.log('=== END BEDROCK RESPONSE ===');
-      
-      // Log if Claude is making tool calls
-      const toolCalls = responseBody.content.filter(c => c.type === 'tool_use');
-      if (toolCalls.length > 0) {
-        console.log(`Claude made ${toolCalls.length} tool calls:`);
-        toolCalls.forEach(tc => {
-          console.log(`  - ${tc.name}:`, JSON.stringify(tc.input, null, 2));
-          console.log(`    ID: ${tc.id}`);
-          
-          // Debug: Check if this is the problematic empty call
-          if (tc.name === 'list_directory' && (!tc.input || Object.keys(tc.input || {}).length === 0)) {
-            console.log(`    ⚠️  DETECTED EMPTY TOOL CALL from Claude!`);
-            console.log(`    ⚠️  Claude sent empty input:`, tc.input);
-            console.log(`    ⚠️  This suggests Claude is not understanding the tool schema correctly`);
-          }
-        });
-      } else {
-        console.log('Claude made no tool calls in this response');
-        console.log('Response content types:', responseBody.content.map(c => c.type).join(', '));
-        console.log('Stop reason:', responseBody.stop_reason);
-      }
-      
-      return this.convertFromBedrockResponse(responseBody);
+      // Use async parsing to avoid blocking the event loop
+      const text = new TextDecoder().decode(body);
+      return JSON.parse(text) as BedrockResponse;
     } catch (error) {
-      throw new Error(`Bedrock API error: ${getErrorMessage(error)}`);
+      throw new Error(`Failed to parse Bedrock response: ${getErrorMessage(error)}`);
     }
   }
 
@@ -273,8 +251,9 @@ export class BedrockContentGenerator implements ContentGenerator {
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
-    console.log(`[BEDROCK-GEN] 📞 generateContentStream called`);
-    console.log(`[BEDROCK-GEN] UserPromptId: ${userPromptId}`);
+    if (this.debugMode) {
+      console.log(`[BEDROCK-GEN] generateContentStream called - UserPromptId: ${userPromptId}`);
+    }
     
     return this.doGenerateContentStream(request, userPromptId);
   }
@@ -283,13 +262,10 @@ export class BedrockContentGenerator implements ContentGenerator {
     request: GenerateContentParameters,
     userPromptId: string,
   ): AsyncGenerator<GenerateContentResponse> {
-    console.log(`[BEDROCK-GEN] 🔄 doGenerateContentStream starting...`);
-    
     try {
       const bedrockRequest = this.convertToBedrockRequest(request);
       
-      // Log tool information for debugging
-      if (bedrockRequest.tools && bedrockRequest.tools.length > 0) {
+      if (this.debugMode && bedrockRequest.tools?.length) {
         console.log(`[BEDROCK-GEN] Streaming request with ${bedrockRequest.tools.length} tools`);
       }
       
@@ -301,9 +277,7 @@ export class BedrockContentGenerator implements ContentGenerator {
       };
 
       const command = new InvokeModelWithResponseStreamCommand(input);
-      console.log(`[BEDROCK-GEN] 🚀 About to send Bedrock STREAMING API request...`);
       const response = await this.client.send(command);
-      console.log(`[BEDROCK-GEN] ✅ Received Bedrock STREAMING API response`);
       
       if (!response.body) {
         throw new Error('No response body from Bedrock');
@@ -311,15 +285,16 @@ export class BedrockContentGenerator implements ContentGenerator {
 
       let accumulatedText = '';
       let currentToolUse: { id: string; name: string; input: any; inputBuffer?: string } | null = null;
+      const decoder = new TextDecoder();
 
       for await (const chunk of response.body) {
         if (chunk.chunk?.bytes) {
-          const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes)) as BedrockStreamChunk;
-          console.log(`[BEDROCK-GEN] 📦 Stream chunk type: ${chunkData.type}`, chunkData.type === 'content_block_start' ? chunkData.content_block : chunkData.type === 'content_block_delta' ? chunkData.delta : {});
+          const chunkData = await this.parseStreamChunk(chunk.chunk.bytes, decoder);
           
           if (chunkData.type === 'content_block_start' && chunkData.content_block?.type === 'tool_use') {
-            // Start of a tool use block
-            console.log(`[BEDROCK-GEN] 🔧 Found tool_use block:`, chunkData.content_block);
+            if (this.debugMode) {
+              console.log(`[BEDROCK-GEN] Found tool_use block: ${chunkData.content_block.name}`);
+            }
             currentToolUse = {
               id: chunkData.content_block.id || '',
               name: chunkData.content_block.name || '',
@@ -341,29 +316,22 @@ export class BedrockContentGenerator implements ContentGenerator {
             ];
             yield chunkResponse;
           } else if (chunkData.type === 'content_block_delta' && currentToolUse) {
-            // Accumulate tool input JSON chunks - try different possible field names
             const inputDelta = chunkData.delta?.partial_json || chunkData.delta?.input || (chunkData as any).input_delta;
             if (inputDelta) {
-              console.log(`[BEDROCK-GEN] 🔧 Accumulating tool input delta:`, inputDelta);
-              if (!currentToolUse.inputBuffer) {
-                currentToolUse.inputBuffer = '';
-              }
-              currentToolUse.inputBuffer += inputDelta;
-            } else {
-              console.log(`[BEDROCK-GEN] 🔧 content_block_delta for tool but no input delta found:`, chunkData.delta);
+              currentToolUse.inputBuffer = (currentToolUse.inputBuffer || '') + inputDelta;
             }
           } else if (chunkData.type === 'content_block_stop' && currentToolUse) {
-            // Complete tool use block - parse accumulated input JSON
             if (currentToolUse.inputBuffer) {
               try {
                 currentToolUse.input = JSON.parse(currentToolUse.inputBuffer);
-                console.log(`[BEDROCK-GEN] 🔧 Parsed tool input from buffer:`, currentToolUse.input);
               } catch (error) {
-                console.warn(`[BEDROCK-GEN] ⚠️ Failed to parse tool input JSON:`, currentToolUse.inputBuffer, error);
+                if (this.debugMode) {
+                  console.warn(`[BEDROCK-GEN] Failed to parse tool input JSON:`, currentToolUse.inputBuffer);
+                }
                 currentToolUse.input = {};
               }
             }
-            console.log(`[BEDROCK-GEN] 🔧 Completing tool_use:`, currentToolUse);
+            
             const toolResponse = new GenerateContentResponse();
             toolResponse.candidates = [
               {
@@ -373,7 +341,6 @@ export class BedrockContentGenerator implements ContentGenerator {
                     functionCall: {
                       name: currentToolUse.name,
                       args: currentToolUse.input,
-                      // Preserve the tool ID for when we need to send the result back
                       id: currentToolUse.id,
                     },
                   }],
@@ -382,11 +349,13 @@ export class BedrockContentGenerator implements ContentGenerator {
                 index: 0,
               },
             ];
-            console.log(`[BEDROCK-GEN] 🔧 Yielding tool call:`, { name: currentToolUse.name, args: currentToolUse.input, id: currentToolUse.id });
+            
+            if (this.debugMode) {
+              console.log(`[BEDROCK-GEN] Yielding tool call: ${currentToolUse.name}`);
+            }
             yield toolResponse;
             currentToolUse = null;
           } else if (chunkData.type === 'message_delta' && chunkData.delta?.stop_reason) {
-            // Final message with usage metadata
             const finishReason = this.mapStopReason(chunkData.delta.stop_reason) as FinishReason;
             
             const finalResponse = new GenerateContentResponse();
@@ -413,6 +382,15 @@ export class BedrockContentGenerator implements ContentGenerator {
       }
     } catch (error) {
       throw new Error(`Bedrock streaming error: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async parseStreamChunk(bytes: Uint8Array, decoder: TextDecoder): Promise<BedrockStreamChunk> {
+    try {
+      const text = decoder.decode(bytes);
+      return JSON.parse(text) as BedrockStreamChunk;
+    } catch (error) {
+      throw new Error(`Failed to parse stream chunk: ${getErrorMessage(error)}`);
     }
   }
 
@@ -482,22 +460,6 @@ export class BedrockContentGenerator implements ContentGenerator {
     } else if ((request as any).generationConfig?.systemInstruction) {
       systemPrompt = (request as any).generationConfig.systemInstruction;
     }
-    
-    // Debug: Log system prompt availability and content
-    console.log('System prompt availability:', {
-      hasSystemInstruction: !!(request as any).systemInstruction,
-      hasConfigSystemInstruction: !!(request as any).config?.systemInstruction,
-      hasGenerationConfigSystemInstruction: !!(request as any).generationConfig?.systemInstruction,
-      systemPromptLength: systemPrompt?.length || 0
-    });
-    
-    if (systemPrompt) {
-      console.log('=== SYSTEM PROMPT CONTENT ===');
-      console.log('First 500 chars:', systemPrompt.substring(0, 500));
-      console.log('Contains tool examples:', systemPrompt.includes('list_directory'));
-      console.log('Contains parameter instructions:', systemPrompt.includes('NEVER call tools with empty parameters'));
-      console.log('=== END SYSTEM PROMPT ===');
-    }
 
     // Convert Gemini format to Bedrock/Claude format
     const contents = this.normalizeContents(request.contents);
@@ -536,88 +498,83 @@ export class BedrockContentGenerator implements ContentGenerator {
       }
     }
     
-    // Convert tools to Bedrock format early so we can use them if we need to start fresh
+    // Convert tools to Bedrock format with caching
     let tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }> | undefined;
     if ((request as any).config?.tools && Array.isArray((request as any).config.tools)) {
-      tools = (request as any).config.tools.map((tool: any) => {
-        // Handle both Gemini format (functionDeclarations) and direct tool format
-        let name: string;
-        let description: string;
-        let originalSchema: any;
-        
-        if (tool.functionDeclarations && Array.isArray(tool.functionDeclarations) && tool.functionDeclarations.length > 0) {
-          // Gemini format: { functionDeclarations: [{ name, description, parametersJsonSchema }] }
-          const funcDecl = tool.functionDeclarations[0];
-          name = funcDecl.name;
-          description = funcDecl.description || '';
-          // Check both parametersJsonSchema (correct field) and parameters (fallback)
-          originalSchema = funcDecl.parametersJsonSchema || funcDecl.parameters || {};
-        } else {
-          // Direct tool format: { name, description, parameters }
-          name = tool.name;
-          description = tool.description || '';
-          originalSchema = tool.parameters || {};
-        }
-        
-        if (!name) {
-          console.warn('Tool is missing name, skipping:', tool);
-          return null;
-        }
-        
-        // Ensure the schema has required Bedrock fields
-        let input_schema = {
-          type: 'object',
-          properties: originalSchema.properties || {},
-          required: originalSchema.required || [],
-          ...originalSchema
-        };
-        
-        // Special handling for list_directory - use minimal schema format like Anthropic native API
-        if (name === 'list_directory') {
-          input_schema = {
-            type: 'object',
-            properties: {
-              path: {
-                type: 'string',
-                description: 'Absolute path to directory'
-              }
-            },
-            required: ['path']
-          };
-          description = 'Lists files in a directory';
-          console.log('Minimal list_directory schema for Claude (matching Anthropic native format):', input_schema);
-        }
-        
-        // Ensure required array exists for Bedrock compatibility
-        if (!Array.isArray(input_schema.required)) {
-          input_schema.required = [];
-        }
-        
-        console.log(`Converting tool "${name}" for Bedrock:`, { 
-          name, 
-          description: description.substring(0, 100) + '...', 
-          input_schema: {
-            type: input_schema.type,
-            required: input_schema.required,
-            propertyCount: Object.keys(input_schema.properties || {}).length
+      // Create cache key based on tool definitions
+      const toolsKey = JSON.stringify((request as any).config.tools);
+      
+      if (BedrockContentGenerator.toolSchemaCache.has(toolsKey)) {
+        tools = BedrockContentGenerator.toolSchemaCache.get(toolsKey);
+      } else {
+        tools = (request as any).config.tools.map((tool: any) => {
+          // Handle both Gemini format (functionDeclarations) and direct tool format
+          let name: string;
+          let description: string;
+          let originalSchema: any;
+          
+          if (tool.functionDeclarations && Array.isArray(tool.functionDeclarations) && tool.functionDeclarations.length > 0) {
+            // Gemini format: { functionDeclarations: [{ name, description, parametersJsonSchema }] }
+            const funcDecl = tool.functionDeclarations[0];
+            name = funcDecl.name;
+            description = funcDecl.description || '';
+            originalSchema = funcDecl.parametersJsonSchema || funcDecl.parameters || {};
+          } else {
+            // Direct tool format: { name, description, parameters }
+            name = tool.name;
+            description = tool.description || '';
+            originalSchema = tool.parameters || {};
           }
-        });
-        
-        // Debug: Log full tool definition being sent to Claude
-        if (name === 'list_directory') {
-          console.log('Full list_directory tool definition:', {
+          
+          if (!name) {
+            if (this.debugMode) {
+              console.warn('Tool is missing name, skipping:', tool);
+            }
+            return null;
+          }
+          
+          // Ensure the schema has required Bedrock fields
+          let input_schema = {
+            type: 'object',
+            properties: originalSchema.properties || {},
+            required: originalSchema.required || [],
+            ...originalSchema
+          };
+          
+          // Special handling for list_directory - use minimal schema format
+          if (name === 'list_directory') {
+            input_schema = {
+              type: 'object',
+              properties: {
+                path: {
+                  type: 'string',
+                  description: 'Absolute path to directory'
+                }
+              },
+              required: ['path']
+            };
+            description = 'Lists files in a directory';
+          }
+          
+          // Ensure required array exists for Bedrock compatibility
+          if (!Array.isArray(input_schema.required)) {
+            input_schema.required = [];
+          }
+          
+          if (this.debugMode) {
+            console.log(`Converting tool "${name}" for Bedrock`);
+          }
+          
+          return {
             name,
             description,
             input_schema
-          });
-        }
+          };
+        }).filter(Boolean); // Remove null entries
         
-        return {
-          name,
-          description,
-          input_schema
-        };
-      }).filter(Boolean); // Remove null entries
+        // Cache the converted tools
+        BedrockContentGenerator.toolSchemaCache.set(toolsKey, tools || []);
+      }
     }
     
     // Only start fresh if we have many consecutive orphaned results (indicates a real loop)
@@ -630,7 +587,9 @@ export class BedrockContentGenerator implements ContentGenerator {
     const shouldStartFresh = orphanedToolResultCount >= 3 && orphanedRatio >= 0.8;
     
     if (shouldStartFresh) {
-      console.log(`ℹ Found ${orphanedToolResultCount} orphaned tool results out of ${totalToolResults} total (${Math.round(orphanedRatio * 100)}%) - starting fresh conversation to avoid loops`);
+      if (this.debugMode) {
+        console.log(`Found ${orphanedToolResultCount} orphaned tool results out of ${totalToolResults} total (${Math.round(orphanedRatio * 100)}%) - starting fresh conversation`);
+      }
       
       // Find the most recent user message to preserve the current request
       let latestUserMessage = `Please list the files in the current directory using the list_directory tool with the path parameter set to "${process.cwd()}".`;
@@ -640,7 +599,6 @@ export class BedrockContentGenerator implements ContentGenerator {
           const textParts = content.parts.filter((part: any) => part.text && !part.text.includes('Analyze *only*'));
           if (textParts.length > 0) {
             const fullMessage = textParts.map((part: any) => part.text).join(' ');
-            // Only use user messages that are actual requests, not analysis prompts
             if (!fullMessage.includes('Analyze *only*') && !fullMessage.includes('preceding response')) {
               latestUserMessage = fullMessage;
               break;
@@ -665,17 +623,12 @@ export class BedrockContentGenerator implements ContentGenerator {
         ...(tools && tools.length > 0 && { tools }),
       };
       
-      console.log('Fresh conversation request:', {
-        messageCount: freshRequest.messages.length,
-        toolCount: freshRequest.tools?.length || 0,
-        userMessage: latestUserMessage.substring(0, 100) + '...',
-        hasSystem: !!freshRequest.system
-      });
-      
-      // Debug: Log the complete fresh request to see what we're actually sending
-      console.log('=== COMPLETE FRESH REQUEST ===');
-      console.log(JSON.stringify(freshRequest, null, 2));
-      console.log('=== END FRESH REQUEST ===');
+      if (this.debugMode) {
+        console.log('Fresh conversation request:', {
+          messageCount: freshRequest.messages.length,
+          toolCount: freshRequest.tools?.length || 0
+        });
+      }
       
       return freshRequest;
     }
@@ -703,16 +656,27 @@ export class BedrockContentGenerator implements ContentGenerator {
           });
           
           if (validContent.length === 0) {
-            console.log(`Skipping message with no valid content for ${content.role}`);
+            if (this.debugMode) {
+              console.log(`Skipping message with no valid content for ${content.role}`);
+            }
             continue; // Skip this entire message
           }
           
-          // Special handling for messages with tool_use: Remove any text parts that come after a tool_use
+          // Special handling for messages with tool_use: Remove any text parts that come after the LAST tool_use
           // This is because Bedrock expects clean tool_use messages without trailing text
-          const toolUseIndex = validContent.findIndex(part => part.type === 'tool_use');
-          if (toolUseIndex !== -1) {
-            // Keep only content up to and including the tool_use
-            const cleanedContent = validContent.slice(0, toolUseIndex + 1);
+          // But we need to keep ALL tool_use blocks, not just the first one
+          const lastToolUseIndex = validContent.map((part, index) => part.type === 'tool_use' ? index : -1)
+            .filter(index => index !== -1)
+            .pop();
+          
+          if (lastToolUseIndex !== undefined) {
+            // Keep everything up to and including the last tool_use, but remove any text after it
+            const cleanedContent = validContent.slice(0, lastToolUseIndex + 1);
+            
+            if (this.debugMode) {
+              console.log(`Message with ${cleanedContent.filter(p => p.type === 'tool_use').length} tool_use blocks after cleaning`);
+            }
+            
             messages.push({
               role: (content.role === 'model' ? 'assistant' : content.role) as 'user' | 'assistant',
               content: cleanedContent.length === 1 && cleanedContent[0].type === 'text' 
@@ -751,26 +715,9 @@ export class BedrockContentGenerator implements ContentGenerator {
       ...(tools && tools.length > 0 && { tools }),
     };
 
-    // Debug: Log the complete request to see message structure
-    console.log('=== BEDROCK REQUEST DEBUG ===');
-    console.log('Message count:', messages.length);
-    messages.forEach((msg, i) => {
-      console.log(`Message ${i}: role=${msg.role}`);
-      if (Array.isArray(msg.content)) {
-        msg.content.forEach((part: any, partIndex: number) => {
-          if (part.type === 'tool_use') {
-            console.log(`  Part ${partIndex}: tool_use ID=${part.id}, name=${part.name}`);
-          } else if (part.type === 'tool_result') {
-            console.log(`  Part ${partIndex}: tool_result tool_use_id=${part.tool_use_id}`);
-          } else if (part.type === 'text') {
-            console.log(`  Part ${partIndex}: text (${part.text?.length || 0} chars)`);
-          }
-        });
-      } else {
-        console.log(`  Content: text (${msg.content?.length || 0} chars)`);
-      }
-    });
-    console.log('=== END BEDROCK REQUEST DEBUG ===');
+    if (this.debugMode) {
+      console.log('Bedrock request debug - Message count:', messages.length);
+    }
 
     return bedrockRequest;
   }
@@ -783,14 +730,21 @@ export class BedrockContentGenerator implements ContentGenerator {
         convertedParts.push({ type: 'text', text: part.text });
       } else if (part.functionCall) {
         // Convert function calls to tool use format
-        // Use the existing ID if available, otherwise generate one
-        const toolUseId = part.functionCall.id || `tool_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        // CRITICAL: Always use the existing ID if available, never generate new ones during conversion
+        // This ensures tool_use and tool_result IDs match exactly
+        const toolUseId = part.functionCall.id;
         
-        console.log(`Converting functionCall to tool_use:`, {
-          name: part.functionCall.name,
-          args: part.functionCall.args,
-          id: toolUseId
-        });
+        if (!toolUseId) {
+          if (this.debugMode) {
+            console.warn('Missing function call ID - this may cause tool_use_id mismatch errors');
+          }
+          // Skip this function call if no ID is provided
+          continue;
+        }
+        
+        if (this.debugMode) {
+          console.log(`Converting functionCall to tool_use: ${part.functionCall.name} with ID: ${toolUseId}`);
+        }
         
         convertedParts.push({
           type: 'tool_use',
@@ -805,15 +759,27 @@ export class BedrockContentGenerator implements ContentGenerator {
         const toolUseId = part.functionResponse.id;
         
         if (!toolUseId) {
-          console.warn('Missing tool ID in functionResponse:', part.functionResponse);
+          if (this.debugMode) {
+            console.warn('Missing tool ID in functionResponse:', part.functionResponse);
+          }
           // Skip this tool result if we can't match it to a tool_use
           continue;
         }
         
+        if (this.debugMode) {
+          console.log(`Processing tool_result with ID: ${toolUseId}, available tool_use IDs: ${Array.from(toolUseIds || []).join(', ')}`);
+        }
+        
         // Skip orphaned tool results (those without corresponding tool_use blocks)
         if (toolUseIds && !toolUseIds.has(toolUseId)) {
-          console.log(`⚠ Skipping orphaned tool_result with ID: ${toolUseId} - no corresponding tool_use found`);
+          if (this.debugMode) {
+            console.log(`Skipping orphaned tool_result with ID: ${toolUseId} - no matching tool_use found`);
+          }
           continue;
+        }
+        
+        if (this.debugMode) {
+          console.log(`Converting functionResponse to tool_result with ID: ${toolUseId}`);
         }
         
         convertedParts.push({
@@ -836,18 +802,13 @@ export class BedrockContentGenerator implements ContentGenerator {
       if (content.type === 'text' && content.text) {
         parts.push({ text: content.text });
       } else if (content.type === 'tool_use') {
-        console.log(`[BEDROCK CONVERT] Converting tool_use to functionCall:`);
-        console.log(`[BEDROCK CONVERT] Tool name: ${content.name}`);
-        console.log(`[BEDROCK CONVERT] Tool input:`, JSON.stringify(content.input, null, 2));
-        console.log(`[BEDROCK CONVERT] Input type:`, typeof content.input);
-        console.log(`[BEDROCK CONVERT] Input keys:`, Object.keys(content.input || {}));
-        
-        if (content.name === 'list_directory') {
-          if (!content.input || Object.keys(content.input || {}).length === 0) {
-            console.log(`[BEDROCK CONVERT] ⚠️  DETECTED: Claude sent empty input for list_directory!`);
-            console.log(`[BEDROCK CONVERT] ⚠️  This proves Claude is NOT providing correct parameters despite our debugging`);
-          } else {
-            console.log(`[BEDROCK CONVERT] ✅ Claude provided input for list_directory:`, content.input);
+        if (this.debugMode) {
+          console.log(`[BEDROCK CONVERT] Converting tool_use to functionCall: ${content.name}`);
+          
+          if (content.name === 'list_directory') {
+            if (!content.input || Object.keys(content.input || {}).length === 0) {
+              console.log(`[BEDROCK CONVERT] WARNING: Claude sent empty input for list_directory`);
+            }
           }
         }
         

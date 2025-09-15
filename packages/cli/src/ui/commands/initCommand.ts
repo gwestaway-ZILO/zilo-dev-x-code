@@ -6,7 +6,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { getCurrentGeminiMdFilename } from '@google/gemini-cli-core';
+import { getCurrentGeminiMdFilename, MemoryComposer } from '@google/gemini-cli-core';
 import type {
   CommandContext,
   SlashCommand,
@@ -16,11 +16,11 @@ import { CommandKind } from './types.js';
 
 export const initCommand: SlashCommand = {
   name: 'init',
-  description: 'Analyzes the project and creates a tailored DevX.md file.',
+  description: 'Analyzes the project and creates DevX.md files with memory layering support.',
   kind: CommandKind.BUILT_IN,
   action: async (
     context: CommandContext,
-    _args: string,
+    args: string,
   ): Promise<SlashCommandActionReturn> => {
     if (!context.services.config) {
       return {
@@ -29,202 +29,158 @@ export const initCommand: SlashCommand = {
         content: 'Configuration not available.',
       };
     }
+
     const targetDir = context.services.config.getTargetDir();
     const contextFileName = getCurrentGeminiMdFilename();
-    const geminiMdPath = path.join(targetDir, contextFileName);
+    const projectMemoryPath = path.join(targetDir, contextFileName);
+    
+    // Initialize memory composer for user memory support
+    const memoryComposer = new MemoryComposer(targetDir);
+    const userMemoryPath = memoryComposer.getUserMemoryPath();
 
-    if (fs.existsSync(geminiMdPath)) {
+    // Parse command arguments to determine scope
+    const scope = args.trim().toLowerCase();
+    const isUserScope = scope === 'user' || scope === '--user';
+    const isProjectScope = scope === 'project' || scope === '--project' || scope === '';
+
+    // Handle user memory initialization
+    if (isUserScope) {
+      const hasUserMemory = await memoryComposer.hasUserMemory();
+      
+      if (hasUserMemory) {
+        return {
+          type: 'message',
+          messageType: 'info',
+          content: `User memory file already exists at ${userMemoryPath}. No changes were made.\n\nTo view: cat "${userMemoryPath}"\nTo edit: Use your preferred editor to modify the file.\n\nTip: Try '/init project' to initialize project-specific memory.`,
+        };
+      }
+
+      // Create user memory file
+      await memoryComposer.createUserMemoryFile();
+
+      context.ui.addItem(
+        {
+          type: 'info',
+          text: `User memory file created at ${userMemoryPath}. This will apply to all your DevX projects.`,
+        },
+        Date.now(),
+      );
+
       return {
         type: 'message',
         messageType: 'info',
-        content:
-          `A ${contextFileName} file already exists in this directory. No changes were made.`,
+        content: `✅ User memory file created at ${userMemoryPath}\n\nThis file contains your personal DevX preferences and will be applied to all projects.\n\nNext steps:\n- Edit the file to add your personal coding preferences\n- Use '/init project' to create project-specific memory\n- Memory precedence: Project > User > Global`,
       };
     }
 
-    // Create an empty DevX.md file
-    fs.writeFileSync(geminiMdPath, '', 'utf8');
+    // Handle project memory initialization
+    if (isProjectScope) {
+      const existingProjectMemory = fs.existsSync(projectMemoryPath);
+      
+      if (existingProjectMemory) {
+        // Offer options: open, merge, replace, abort
+        context.ui.addItem(
+          {
+            type: 'info',
+            text: `Project memory file ${contextFileName} already exists. Choose an option:`,
+          },
+          Date.now(),
+        );
 
-    context.ui.addItem(
-      {
-        type: 'info',
-        text: `Empty ${contextFileName} created. Now analyzing the project to populate it.`,
-      },
-      Date.now(),
-    );
+        return {
+          type: 'submit_prompt',
+          content: `A ${contextFileName} file already exists in this project. Please choose how to proceed:
 
+**OPTIONS:**
+- **merge** - Analyze the project and merge new content with existing file
+- **replace** - Replace the existing file with fresh analysis  
+- **open** - Open the existing file for viewing/editing
+- **abort** - Cancel the operation
+
+Please respond with one of: merge, replace, open, or abort`,
+        };
+      }
+
+      // Create empty project memory file
+      fs.writeFileSync(projectMemoryPath, '', 'utf8');
+
+      context.ui.addItem(
+        {
+          type: 'info',
+          text: `Empty ${contextFileName} created. Now analyzing the project to populate it.`,
+        },
+        Date.now(),
+      );
+
+      // Install default agents if this is the first time
+      try {
+        const agentLoader = context.services.config!.getAgentLoader();
+        const installResult = await agentLoader.installDefaultAgentsIfNeeded();
+        
+        if (installResult.installed && installResult.agents.length > 0) {
+          context.ui.addItem(
+            {
+              type: 'info',
+              text: `🤖 Enhanced DevX experience! Installed ${installResult.agents.length} specialized agents:\n${installResult.agents.map(name => `   ✅ ${name}`).join('\n')}\n\n💡 Use '/agent list' to see all agents or '/agent use <name>' to activate one.`,
+            },
+            Date.now(),
+          );
+        }
+      } catch (error) {
+        // Don't fail the init command if agent installation fails
+        console.warn('Agent installation failed:', error);
+      }
+
+      return {
+        type: 'submit_prompt',
+        content: `I need you to analyze this project and create a comprehensive ${contextFileName} file. 
+
+**IMPORTANT:** You MUST use the write_file tool to create the file at "${projectMemoryPath}".
+
+Please follow this workflow:
+1. First, explore the project structure and key files
+2. Then, use the write_file tool to create a complete ${contextFileName}
+
+The file should include these sections:
+- Project Overview (what this project does, tech stack, architecture)
+- Essential Commands (development, build, testing)
+- Architecture (project structure, key components)
+- Development Guidelines (code standards, testing strategy)
+- Configuration (environment variables, build settings)
+- Troubleshooting (common issues)
+
+Start by exploring the project files to understand what this project does.`,
+      };
+    }
+
+    // Default case - show usage help
     return {
-      type: 'submit_prompt',
-      content: `
-**🚨 MANDATORY TOOL USAGE REQUIRED 🚨**
+      type: 'message',
+      messageType: 'info',
+      content: `DevX Memory Initialization - Enhanced with Layering Support
 
-You MUST complete this task by using the write_file tool. This is NOT optional.
+**Usage:**
+- \`/init\` or \`/init project\` - Initialize project-specific memory (${contextFileName})
+- \`/init user\` - Initialize user-global memory (~/.devx/DEVX.md)
 
-**REQUIRED ACTION:** You must analyze this project and then call the write_file tool exactly like this:
+**Memory Layering (precedence: highest to lowest):**
+1. **Agent Memory** - Active agent's memory (if any)
+2. **Project Memory** - ${contextFileName} (project-specific)
+3. **User Memory** - ~/.devx/DEVX.md (applies to all projects)
+4. **Global Memory** - ~/.gemini/DevX.md (backward compatibility)
 
-\`\`\`
-write_file({
-  "file_path": "${geminiMdPath}",
-  "content": "# ${contextFileName}\\n\\n## Project Overview\\n[Your analysis here]\\n\\n## Essential Commands\\n[Commands here]\\n..."
-})
-\`\`\`
+**Import Support:**
+Memory files can import other files using @import syntax:
+- \`@./relative/path.md\` - Relative to current file
+- \`@~/.devx/shared/file.md\` - User DevX directory
+- \`@/absolute/path.md\` - Absolute path
 
-**❌ DO NOT:** Simply describe what you would write or explain the analysis in text
-**✅ DO:** Actually use the write_file tool to create the file content
+**Examples:**
+- \`/init\` - Analyze this project and create ${contextFileName}
+- \`/init user\` - Create ~/.devx/DEVX.md for personal preferences
+- \`/init project\` - Same as \`/init\` (explicit)
 
-You are analyzing the current directory to generate a comprehensive ${contextFileName} file for future AI interactions.
-
-**WORKFLOW - ANALYSIS THEN TOOL USAGE:**
-
-1. First: Analyze the project (use tools to explore files)
-2. Then: IMMEDIATELY use write_file tool with your findings
-
-**Analysis Process:**
-
-1.  **Initial Exploration:**
-    *   Start by listing the files and directories to get a high-level overview of the structure.
-    *   Read the README file (e.g., \`README.md\`, \`README.txt\`) if it exists. This is often the best place to start.
-    *   Check for configuration files (\`package.json\`, \`tsconfig.json\`, \`.eslintrc\`, etc.) to understand the tech stack.
-
-2.  **Iterative Deep Dive (up to 10 files):**
-    *   Based on your initial findings, select files that reveal the most about the project:
-        - Configuration files (package.json, tsconfig.json, vite.config.js, etc.)
-        - Main entry points (index.ts, main.py, app.js, etc.)
-        - Test files to understand testing patterns
-        - CI/CD configurations (.github/workflows, .gitlab-ci.yml)
-        - Build configurations (Makefile, webpack.config.js, etc.)
-    *   Let your discoveries guide your exploration - adapt based on what you find.
-
-3.  **Identify Project Characteristics:**
-    *   **Language & Framework:** TypeScript/JavaScript, Python, Go, Java, etc.
-    *   **Project Type:** Web app, CLI tool, library, API service, etc.
-    *   **Architecture:** Monorepo, microservices, single package, etc.
-    *   **Testing Framework:** Jest, Vitest, Pytest, Go test, etc.
-    *   **Build Tools:** Webpack, Vite, Rollup, Make, Gradle, etc.
-
-**${contextFileName} Content Generation:**
-
-Generate a comprehensive guide with the following structure:
-
-# ${contextFileName}
-
-## Project Overview
-- Clear, concise summary of what this project does
-- Main technologies and frameworks used
-- High-level architecture description
-- Key dependencies and their purposes
-
-## Essential Commands
-
-### Development
-- Commands to start development mode
-- Hot reload/watch mode commands
-- Local environment setup
-
-### Build & Deployment  
-- Build commands for production
-- Deployment procedures
-- Environment-specific builds
-
-### Testing & Quality
-- Unit test commands
-- Integration/E2E test commands
-- Linting and formatting commands
-- Type checking commands
-- Coverage reports
-
-## Architecture
-
-### Project Structure
-- Describe the directory layout
-- Explain the purpose of key directories
-- Note any unconventional structures
-
-### Key Components
-- List and describe main modules/packages
-- Explain their relationships and dependencies
-- Highlight important files and their roles
-
-### Design Patterns
-- Architectural patterns used (MVC, microservices, etc.)
-- Code organization principles
-- State management approach (if applicable)
-
-## Development Guidelines
-
-### Code Standards
-- Language-specific best practices
-- Naming conventions
-- File organization rules
-- Import/export patterns
-
-### Testing Strategy
-- Testing philosophy and coverage goals
-- Test file locations and naming
-- Mocking strategies
-- Test data management
-
-### Git Workflow
-- Branch naming conventions
-- Commit message format
-- PR/MR process
-- Code review guidelines
-
-## Configuration
-
-### Environment Variables
-- List key environment variables
-- Explain their purposes
-- Note any required secrets
-
-### Build Configuration
-- Build tool configuration
-- Bundle optimization settings
-- Development vs production differences
-
-## Troubleshooting
-
-### Common Issues
-- List known issues and solutions
-- Dependency conflicts
-- Build problems
-- Runtime errors
-
-### Development Tips
-- Performance optimization tips
-- Debugging strategies
-- Useful development tools
-
-## Additional Resources
-- Link to documentation
-- Related repositories
-- External dependencies documentation
-- Team contacts or support channels
-
-**Special Instructions:**
-- If you cannot determine certain information, add a TODO comment like: \`<!-- TODO: Add deployment procedures -->\`
-- Be specific and accurate based on what you discover
-- Include actual command examples from package.json scripts or Makefiles
-- Adapt the sections based on the project type (some sections may not apply to all projects)
-
-**🔥 IMMEDIATE ACTION REQUIRED 🔥**
-
-After your analysis, you must IMMEDIATELY call the write_file tool. No exceptions.
-
-Example of the EXACT tool call you must make:
-
-\`\`\`
-write_file({
-  "file_path": "${geminiMdPath}",
-  "content": "# ${contextFileName}\\n\\n## Project Overview\\nThis project is a [description]...\\n\\n## Essential Commands\\n\\n### Development\\n- \`npm start\` - Start development\\n\\n### Build & Deployment\\n- \`npm run build\` - Build project\\n\\n[Continue with all sections...]"
-})
-\`\`\`
-
-**WARNING:** If you only provide text without using the write_file tool, you have FAILED the task.
-**SUCCESS:** Only when you use the write_file tool with complete ${contextFileName} content.
-
-Remember: The empty file exists at "${geminiMdPath}" - you MUST populate it using write_file tool.
-`,
+Try one of these commands to get started!`,
     };
   },
 };

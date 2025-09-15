@@ -13,10 +13,13 @@ import type {
   AgentDefinition, 
   AgentFrontmatter, 
   AgentMetadata,
-  ClaudeModel
+  ClaudeModel,
+  AgentBundle,
+  AgentInstallationMarker
 } from './types.js';
 import { SUPPORTED_CLAUDE_MODELS } from './types.js';
 import { getErrorMessage } from '../utils/errors.js';
+import { DEFAULT_BUNDLE, getBundle } from './bundles/index.js';
 
 const DEVX_DIR = '.devx';
 const AGENTS_DIR = 'agents';
@@ -273,5 +276,106 @@ ${agent.prompt}
       console.warn(`Error deleting agent ${name}: ${getErrorMessage(error)}`);
       return false;
     }
+  }
+
+  /**
+   * Check if this is the first time agents are being installed
+   */
+  isFirstTimeInstallation(): boolean {
+    const workspaceAgentsDir = getWorkspaceAgentsDir(this.workspaceRoot);
+    const markerPath = path.join(workspaceAgentsDir, '.installation-marker');
+    return !fs.existsSync(markerPath);
+  }
+
+  /**
+   * Mark agents as installed to prevent future auto-installation
+   */
+  markInstallationComplete(bundleName: string, installedAgents: string[]): void {
+    const workspaceAgentsDir = this.ensureAgentsDirectory('workspace');
+    const markerPath = path.join(workspaceAgentsDir, '.installation-marker');
+    
+    const marker: AgentInstallationMarker = {
+      installedAt: new Date().toISOString(),
+      bundleVersion: DEFAULT_BUNDLE.version,
+      installedAgents
+    };
+
+    try {
+      fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2), 'utf-8');
+    } catch (error) {
+      console.warn(`Error creating installation marker: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Install agents from a bundle
+   */
+  async installBundle(bundle: AgentBundle, scope: 'user' | 'workspace' = 'workspace'): Promise<string[]> {
+    const agentsDir = this.ensureAgentsDirectory(scope);
+    const installedAgents: string[] = [];
+
+    for (const agentDef of bundle.agents) {
+      try {
+        const fileName = `${agentDef.name}.md`;
+        const filePath = path.join(agentsDir, fileName);
+        
+        // Skip if agent already exists
+        if (fs.existsSync(filePath)) {
+          console.log(`Agent ${agentDef.name} already exists, skipping...`);
+          continue;
+        }
+
+        // Create agent frontmatter
+        const frontmatter: AgentFrontmatter = {
+          name: agentDef.name,
+          description: agentDef.description,
+          ...(agentDef.tools && { tools: agentDef.tools }),
+          ...(agentDef.model && { model: agentDef.model }),
+          ...(agentDef.memory && { memory: agentDef.memory }),
+        };
+
+        // Create agent file content
+        const content = `---
+${yaml.stringify(frontmatter)}---
+${agentDef.prompt}
+`;
+
+        fs.writeFileSync(filePath, content, 'utf-8');
+        installedAgents.push(agentDef.name);
+      } catch (error) {
+        console.warn(`Error installing agent ${agentDef.name}: ${getErrorMessage(error)}`);
+      }
+    }
+
+    // Force reload to pick up new agents
+    this.forceReload();
+    
+    return installedAgents;
+  }
+
+  /**
+   * Install default agents if this is the first time
+   */
+  async installDefaultAgentsIfNeeded(): Promise<{ installed: boolean; agents: string[] }> {
+    if (!this.isFirstTimeInstallation()) {
+      return { installed: false, agents: [] };
+    }
+
+    try {
+      const installedAgents = await this.installBundle(DEFAULT_BUNDLE, 'workspace');
+      this.markInstallationComplete(DEFAULT_BUNDLE.name, installedAgents);
+      
+      return { installed: true, agents: installedAgents };
+    } catch (error) {
+      console.warn(`Error installing default agents: ${getErrorMessage(error)}`);
+      return { installed: false, agents: [] };
+    }
+  }
+
+  /**
+   * Get available built-in bundles
+   */
+  getAvailableBundle(name: string): AgentBundle | undefined {
+    return getBundle(name);
   }
 }
