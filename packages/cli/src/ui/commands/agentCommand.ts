@@ -512,5 +512,222 @@ Please provide clear, helpful responses and use the available tools when appropr
         }
       },
     },
+    {
+      name: 'bundle',
+      description: 'Manage agent bundles - collections of related agents.',
+      kind: CommandKind.BUILT_IN,
+      subCommands: [
+        {
+          name: 'list',
+          description: 'List available agent bundles.',
+          kind: CommandKind.BUILT_IN,
+          action: async (context): Promise<SlashCommandActionReturn | void> => {
+            try {
+              const config = context.services.config;
+              if (!config) {
+                return {
+                  type: 'message',
+                  messageType: 'error',
+                  content: 'Configuration not available',
+                };
+              }
+
+              // Import bundles dynamically to avoid circular dependencies
+              const { BUILT_IN_BUNDLES } = await import('@google/gemini-cli-core');
+              
+              if (Object.keys(BUILT_IN_BUNDLES).length === 0) {
+                context.ui.addItem(
+                  {
+                    type: MessageType.INFO,
+                    text: 'No agent bundles available.',
+                  },
+                  Date.now(),
+                );
+                return;
+              }
+
+              let listText = 'Available agent bundles:\n\n';
+              
+              for (const [, bundle] of Object.entries(BUILT_IN_BUNDLES)) {
+                listText += `**${bundle.name}** (${bundle.version})\n`;
+                listText += `   Category: ${bundle.category}\n`;
+                listText += `   ${bundle.description}\n`;
+                listText += `   Agents: ${bundle.agents.map((a: any) => a.name).join(', ')}\n\n`;
+              }
+
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: listText.trim(),
+                },
+                Date.now(),
+              );
+            } catch (error) {
+              context.ui.addItem(
+                {
+                  type: MessageType.ERROR,
+                  text: `Error listing bundles: ${getErrorMessage(error)}`,
+                },
+                Date.now(),
+              );
+            }
+          },
+        },
+        {
+          name: 'install',
+          description: 'Install agents from a specific bundle.',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args): Promise<SlashCommandActionReturn | void> => {
+            if (!args || args.trim() === '') {
+              return {
+                type: 'message',
+                messageType: 'error',
+                content: 'Usage: /agent bundle install <bundle-name>\n\nUse "/agent bundle list" to see available bundles.',
+              };
+            }
+
+            const bundleName = args.trim();
+            
+            try {
+              const config = context.services.config;
+              if (!config) {
+                return {
+                  type: 'message',
+                  messageType: 'error',
+                  content: 'Configuration not available',
+                };
+              }
+
+              const agentLoader = config.getAgentLoader();
+              const bundle = agentLoader.getAvailableBundle(bundleName);
+              
+              if (!bundle) {
+                return {
+                  type: 'message',
+                  messageType: 'error',
+                  content: `Bundle '${bundleName}' not found. Use '/agent bundle list' to see available bundles.`,
+                };
+              }
+
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: `Installing agents from bundle: **${bundle.name}**...`,
+                },
+                Date.now(),
+              );
+
+              const installedAgents = await agentLoader.installBundle(bundle, 'workspace');
+              
+              if (installedAgents.length > 0) {
+                context.ui.addItem(
+                  {
+                    type: MessageType.INFO,
+                    text: `✅ Successfully installed ${installedAgents.length} agents:\n${installedAgents.map(name => `   • ${name}`).join('\n')}\n\nUse '/agent list' to see all available agents.`,
+                  },
+                  Date.now(),
+                );
+              } else {
+                context.ui.addItem(
+                  {
+                    type: MessageType.INFO,
+                    text: 'All agents from this bundle are already installed.',
+                  },
+                  Date.now(),
+                );
+              }
+            } catch (error) {
+              context.ui.addItem(
+                {
+                  type: MessageType.ERROR,
+                  text: `Error installing bundle: ${getErrorMessage(error)}`,
+                },
+                Date.now(),
+              );
+            }
+          },
+        },
+        {
+          name: 'show',
+          description: 'Show details of a specific bundle.',
+          kind: CommandKind.BUILT_IN,
+          action: async (context, args): Promise<SlashCommandActionReturn | void> => {
+            if (!args || args.trim() === '') {
+              return {
+                type: 'message',
+                messageType: 'error',
+                content: 'Usage: /agent bundle show <bundle-name>',
+              };
+            }
+
+            const bundleName = args.trim();
+            
+            try {
+              const config = context.services.config;
+              if (!config) {
+                return {
+                  type: 'message',
+                  messageType: 'error',
+                  content: 'Configuration not available',
+                };
+              }
+
+              const agentLoader = config.getAgentLoader();
+              const bundle = agentLoader.getAvailableBundle(bundleName);
+              
+              if (!bundle) {
+                return {
+                  type: 'message',
+                  messageType: 'error',
+                  content: `Bundle '${bundleName}' not found. Use '/agent bundle list' to see available bundles.`,
+                };
+              }
+
+              let details = `**Bundle: ${bundle.name}** (v${bundle.version})\n\n`;
+              details += `**Description:** ${bundle.description}\n`;
+              details += `**Category:** ${bundle.category}\n\n`;
+              
+              if (bundle.metadata?.author) {
+                details += `**Author:** ${bundle.metadata.author}\n`;
+              }
+              
+              if (bundle.metadata?.tags?.length) {
+                details += `**Tags:** ${bundle.metadata.tags.join(', ')}\n`;
+              }
+              
+              details += `\n**Agents in this bundle:**\n\n`;
+              
+              for (const agent of bundle.agents) {
+                details += `• **${agent.name}**\n`;
+                details += `  ${agent.description}\n`;
+                if (agent.model) {
+                  details += `  Model: ${agent.model}\n`;
+                }
+                if (agent.tools?.length) {
+                  details += `  Tools: ${agent.tools.join(', ')}\n`;
+                }
+                details += '\n';
+              }
+
+              context.ui.addItem(
+                {
+                  type: MessageType.INFO,
+                  text: details.trim(),
+                },
+                Date.now(),
+              );
+            } catch (error) {
+              context.ui.addItem(
+                {
+                  type: MessageType.ERROR,
+                  text: `Error showing bundle: ${getErrorMessage(error)}`,
+                },
+                Date.now(),
+              );
+            }
+          },
+        },
+      ],
+    },
   ],
 };

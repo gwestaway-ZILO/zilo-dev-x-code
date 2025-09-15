@@ -1,0 +1,19 @@
+#!/usr/bin/env node
+
+// DevX CLI Global Executable
+// This script directly runs the bundled DevX CLI
+
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Path to the bundled CLI
+const bundlePath = join(__dirname, 'bundle', 'gemini.js');
+
+// Import and run the CLI
+import(bundlePath).catch(error => {
+  console.error('Failed to start DevX CLI:', error.message);
+  process.exit(1);
+});

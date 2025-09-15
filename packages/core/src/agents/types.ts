@@ -77,3 +77,37 @@ export interface AgentContext {
   /** Available tools for this agent (after filtering) */
   availableTools: string[];
 }
+
+/**
+ * Agent bundle containing multiple related agents
+ */
+export interface AgentBundle {
+  /** Unique bundle identifier */
+  name: string;
+  /** Bundle version */
+  version: string;
+  /** Human-readable description */
+  description: string;
+  /** Category for organization */
+  category: string;
+  /** Agent definitions in this bundle */
+  agents: AgentDefinition[];
+  /** Bundle metadata */
+  metadata?: {
+    author?: string;
+    tags?: string[];
+    requirements?: string[];
+  };
+}
+
+/**
+ * Installation marker to track first-time setup
+ */
+export interface AgentInstallationMarker {
+  /** Timestamp of first installation */
+  installedAt: string;
+  /** Version of default bundle installed */
+  bundleVersion: string;
+  /** List of installed agent names */
+  installedAgents: string[];
+}

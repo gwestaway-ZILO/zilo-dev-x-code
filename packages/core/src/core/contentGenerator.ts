@@ -207,7 +207,9 @@ export async function createContentGenerator(
   if (config.authType === AuthType.USE_AWS_BEDROCK) {
     console.log(`[CONTENT-GEN] ✅ Creating BedrockContentGenerator`);
     const awsRegion = process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'];
-    const bedrockGenerator = new BedrockContentGenerator(config.model, awsRegion);
+    // Get debug mode from config if available
+    const debugMode = (config as any).debugMode || (config as any).getDebugMode?.() || false;
+    const bedrockGenerator = new BedrockContentGenerator(config.model, awsRegion, debugMode);
     return new LoggingContentGenerator(bedrockGenerator, gcConfig);
   }
 

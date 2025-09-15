@@ -50,6 +50,7 @@ import { findLastSafeSplitPoint } from '../utils/markdownUtilities.js';
 import { useStateAndRef } from './useStateAndRef.js';
 import type { UseHistoryManagerReturn } from './useHistoryManager.js';
 import { useLogger } from './useLogger.js';
+import { optimizeResponse, detectResponseDuplication } from '@google/gemini-cli-core';
 import type {
   TrackedToolCall,
   TrackedCompletedToolCall,
@@ -154,9 +155,11 @@ export const useGeminiStream = (
 
   const loopDetectedRef = useRef(false);
   
-  // Content deduplication tracking (similar to nonInteractiveCli.ts)
+  // Content deduplication tracking with LRU cache for better performance
   const cumulativeContentRef = useRef<string>('');
-  const seenContentRef = useRef<Set<string>>(new Set());
+  const seenContentRef = useRef<Map<string, boolean>>(new Map());
+  const responseHashRef = useRef<string>('');
+  const MAX_SEEN_CONTENT_SIZE = 1000; // Limit to prevent memory bloat
 
   const onExec = useCallback(async (done: Promise<void>) => {
     setIsResponding(true);
@@ -398,22 +401,50 @@ export const useGeminiStream = (
         return '';
       }
       
-      // Content deduplication logic (similar to nonInteractiveCli.ts)
+      // Content deduplication logic with response-level and chunk-level detection
+      const newBuffer = currentGeminiMessageBuffer + eventValue;
+      
+      // Generate hash for response-level deduplication detection
+      const responseHash = newBuffer.length > 100 ? 
+        newBuffer.substring(0, 100) + '...' + newBuffer.substring(newBuffer.length - 100) : 
+        newBuffer;
+      
+      // Check for complete response duplication
+      if (responseHash === responseHashRef.current && responseHash.length > 50) {
+        return currentGeminiMessageBuffer; // Skip complete duplicate responses
+      }
+      
+      // Detect full response duplication using more sophisticated algorithm
+      if (newBuffer.length > 500 && detectResponseDuplication(newBuffer)) {
+        return currentGeminiMessageBuffer; // Skip duplicated content
+      }
+      
       // Check if this is a complete duplicate of cumulative content
       if (eventValue === cumulativeContentRef.current) {
-        // Skip complete duplicate responses
         return currentGeminiMessageBuffer;
       }
       
-      // Check if this chunk has already been seen
+      // Check if this chunk has already been seen using Map for better performance
       if (seenContentRef.current.has(eventValue)) {
-        // Skip individual duplicate chunks
         return currentGeminiMessageBuffer;
       }
       
-      // Track this new content
-      seenContentRef.current.add(eventValue);
+      // Track this new content with LRU eviction
+      const seenContent = seenContentRef.current;
+      if (seenContent.size >= MAX_SEEN_CONTENT_SIZE) {
+        // Remove oldest entry (first key in Map maintains insertion order)
+        const firstKey = seenContent.keys().next().value;
+        if (firstKey !== undefined) {
+          seenContent.delete(firstKey);
+        }
+      }
+      seenContent.set(eventValue, true);
       cumulativeContentRef.current += eventValue;
+      
+      // Update response hash for future duplicate detection
+      if (newBuffer.length > 50) {
+        responseHashRef.current = responseHash;
+      }
       
       let newGeminiMessageBuffer = currentGeminiMessageBuffer + eventValue;
       if (
@@ -723,6 +754,7 @@ export const useGeminiStream = (
         // Reset content deduplication tracking for new queries
         cumulativeContentRef.current = '';
         seenContentRef.current.clear();
+        responseHashRef.current = '';
       }
 
       abortControllerRef.current = new AbortController();
@@ -769,7 +801,15 @@ export const useGeminiStream = (
           }
 
           if (pendingHistoryItemRef.current) {
-            addItem(pendingHistoryItemRef.current, userMessageTimestamp);
+            // Optimize response content before adding to history
+            const optimizedItem = pendingHistoryItemRef.current.type === 'gemini' || pendingHistoryItemRef.current.type === 'gemini_content'
+              ? {
+                  ...pendingHistoryItemRef.current,
+                  text: optimizeResponse(pendingHistoryItemRef.current.text)
+                }
+              : pendingHistoryItemRef.current;
+            
+            addItem(optimizedItem, userMessageTimestamp);
             setPendingHistoryItem(null);
           }
           if (loopDetectedRef.current) {

@@ -76,6 +76,7 @@ import { AgentLoader } from '../agents/agentLoader.js';
 import type { AgentDefinition } from '../agents/types.js';
 import type { FunctionDeclaration } from '@google/genai';
 import { DevXSettingsLoader, type AgentSettings } from './settings.js';
+import { MemoryComposer, type ComposedMemory } from './memory.js';
 
 export enum ApprovalMode {
   DEFAULT = 'default',
@@ -317,6 +318,7 @@ export class Config {
   private agentLoader: AgentLoader;
   private currentAgent: AgentDefinition | undefined;
   private devxSettingsLoader: DevXSettingsLoader;
+  private memoryComposer: MemoryComposer;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -403,6 +405,7 @@ export class Config {
     this.agentLoader = new AgentLoader(this.targetDir);
     this.currentAgent = undefined;
     this.devxSettingsLoader = new DevXSettingsLoader(this.targetDir);
+    this.memoryComposer = new MemoryComposer(this.targetDir);
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -1012,22 +1015,71 @@ export class Config {
   }
 
   /**
-   * Gets the effective system prompt, including agent prompt if active
+   * Gets the effective system prompt, including layered memory and agent prompt if active
+   * Note: This is synchronous for compatibility - memory composition happens elsewhere
    */
   getEffectiveSystemPrompt(baseSystemPrompt?: string): string {
-    if (!this.currentAgent) {
-      return baseSystemPrompt || '';
+    return this.getEffectiveSystemPromptSync(baseSystemPrompt);
+  }
+
+  /**
+   * Async version of getEffectiveSystemPrompt that composes layered memory
+   */
+  async getEffectiveSystemPromptAsync(baseSystemPrompt?: string): Promise<string> {
+    const parts: string[] = [];
+
+    try {
+      // 1. Compose layered memory (project > user > global, with imports resolved)
+      const agentMemory = this.currentAgent?.memory;
+      const composedMemory = await this.memoryComposer.composeMemory(agentMemory);
+      
+      if (composedMemory.content.trim()) {
+        parts.push('# Context Memory\n\n' + composedMemory.content.trim());
+        
+        // Log any import errors for debugging
+        if (composedMemory.errors.length > 0 && this.debugMode) {
+          console.log('[DEBUG] Memory composition errors:', composedMemory.errors);
+        }
+      }
+    } catch (error) {
+      // Don't fail system prompt composition due to memory errors
+      if (this.debugMode) {
+        console.log('[DEBUG] Error composing memory:', error instanceof Error ? error.message : String(error));
+      }
     }
 
-    // If an agent is active, use its prompt as the primary system prompt
-    let effectivePrompt = this.currentAgent.prompt;
-
-    // If there's a base system prompt, append it after the agent prompt
-    if (baseSystemPrompt) {
-      effectivePrompt += '\n\n' + baseSystemPrompt;
+    // 2. Add agent prompt if active (takes precedence over base prompt)
+    if (this.currentAgent?.prompt) {
+      parts.push('# Agent Instructions\n\n' + this.currentAgent.prompt.trim());
     }
 
-    return effectivePrompt;
+    // 3. Add base system prompt last
+    if (baseSystemPrompt?.trim()) {
+      parts.push('# System Instructions\n\n' + baseSystemPrompt.trim());
+    }
+
+    // Join all parts with clear separators
+    return parts.length > 0 ? parts.join('\n\n---\n\n') : '';
+  }
+
+  /**
+   * Synchronous version that returns a placeholder for immediate use
+   * The actual memory will be loaded asynchronously
+   */
+  private getEffectiveSystemPromptSync(baseSystemPrompt?: string): string {
+    const parts: string[] = [];
+
+    // Add agent prompt if active
+    if (this.currentAgent?.prompt) {
+      parts.push('# Agent Instructions\n\n' + this.currentAgent.prompt.trim());
+    }
+
+    // Add base system prompt
+    if (baseSystemPrompt?.trim()) {
+      parts.push('# System Instructions\n\n' + baseSystemPrompt.trim());
+    }
+
+    return parts.length > 0 ? parts.join('\n\n---\n\n') : '';
   }
 
   /**
@@ -1089,6 +1141,21 @@ export class Config {
   isAgentAutoActivationEnabled(): boolean {
     const agentSettings = this.getDevXSettings();
     return agentSettings?.autoActivate ?? false;
+  }
+
+  /**
+   * Gets the memory composer instance
+   */
+  getMemoryComposer(): MemoryComposer {
+    return this.memoryComposer;
+  }
+
+  /**
+   * Compose layered memory asynchronously
+   */
+  async composeMemory(): Promise<ComposedMemory> {
+    const agentMemory = this.currentAgent?.memory;
+    return await this.memoryComposer.composeMemory(agentMemory);
   }
 }
 // Export model constants for use in CLI

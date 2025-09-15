@@ -44,28 +44,31 @@ class ReadFileToolInvocation extends BaseToolInvocation<
   ReadFileToolParams,
   ToolResult
 > {
+  private readonly absolutePath: string;
+
   constructor(
     private config: Config,
     params: ReadFileToolParams,
   ) {
     super(params);
+    this.absolutePath = params.absolute_path;
   }
 
   getDescription(): string {
     const relativePath = makeRelative(
-      this.params.absolute_path,
+      this.absolutePath,
       this.config.getTargetDir(),
     );
     return shortenPath(relativePath);
   }
 
   override toolLocations(): ToolLocation[] {
-    return [{ path: this.params.absolute_path, line: this.params.offset }];
+    return [{ path: this.absolutePath, line: this.params.offset }];
   }
 
   async execute(): Promise<ToolResult> {
     const result = await processSingleFileContent(
-      this.params.absolute_path,
+      this.absolutePath,
       this.config.getTargetDir(),
       this.config.getFileSystemService(),
       this.params.offset,
@@ -105,9 +108,9 @@ ${result.llmContent}`;
       typeof result.llmContent === 'string'
         ? result.llmContent.split('\n').length
         : undefined;
-    const mimetype = getSpecificMimeType(this.params.absolute_path);
+    const mimetype = getSpecificMimeType(this.absolutePath);
     const programming_language = getProgrammingLanguage({
-      absolute_path: this.params.absolute_path,
+      absolute_path: this.absolutePath,
     });
     logFileOperation(
       this.config,
@@ -116,7 +119,7 @@ ${result.llmContent}`;
         FileOperation.READ,
         lines,
         mimetype,
-        path.extname(this.params.absolute_path),
+        path.extname(this.absolutePath),
         programming_language,
       ),
     );
@@ -170,10 +173,11 @@ export class ReadFileTool extends BaseDeclarativeTool<
   protected override validateToolParamValues(
     params: ReadFileToolParams,
   ): string | null {
-    const filePath = params.absolute_path;
     if (params.absolute_path.trim() === '') {
       return "The 'absolute_path' parameter must be non-empty.";
     }
+    
+    const filePath = params.absolute_path;
 
     if (!path.isAbsolute(filePath)) {
       return `File path must be absolute, but was relative: ${filePath}. You must provide an absolute path.`;
@@ -199,7 +203,7 @@ export class ReadFileTool extends BaseDeclarativeTool<
     }
 
     const fileService = this.config.getFileService();
-    if (fileService.shouldGeminiIgnoreFile(params.absolute_path)) {
+    if (fileService.shouldGeminiIgnoreFile(filePath)) {
       return `File path '${filePath}' is ignored by .geminiignore pattern(s).`;
     }
 
