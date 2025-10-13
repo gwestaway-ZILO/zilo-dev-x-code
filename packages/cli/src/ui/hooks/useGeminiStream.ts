@@ -12,6 +12,7 @@ import type {
   ServerGeminiChatCompressedEvent,
   ServerGeminiContentEvent as ContentEvent,
   ServerGeminiFinishedEvent,
+  ServerGeminiRetryEvent,
   ServerGeminiStreamEvent as GeminiEvent,
   ThoughtSummary,
   ToolCallRequestInfo,
@@ -34,6 +35,8 @@ import {
   getCodeAssistServer,
   UserTierId,
   promptIdContext,
+  retryMessageService,
+  type RetryMessage,
 } from '@google/gemini-cli-core';
 import { type Part, type PartListUnion, FinishReason } from '@google/genai';
 import type {
@@ -248,6 +251,28 @@ export const useGeminiStream = (
     onCancelSubmit,
     pendingHistoryItemRef,
   ]);
+
+  // Listen for retry messages from the retry service
+  useEffect(() => {
+    const handleRetryMessage = (retryMessage: RetryMessage) => {
+      const { attempt, maxAttempts, delaySeconds, errorType } = retryMessage;
+      const message = `✕ API Error (${errorType}) · Retrying in ${delaySeconds} seconds… (attempt ${attempt}/${maxAttempts})`;
+      
+      addItem(
+        {
+          type: MessageType.INFO,
+          text: message,
+        },
+        Date.now(),
+      );
+    };
+
+    retryMessageService.onRetryMessage(handleRetryMessage);
+    
+    return () => {
+      retryMessageService.removeRetryListener(handleRetryMessage);
+    };
+  }, [addItem]);
 
   useKeypress(
     (key) => {
@@ -705,7 +730,17 @@ export const useGeminiStream = (
             loopDetectedRef.current = true;
             break;
           case ServerGeminiEventType.Retry:
-            // Will add the missing logic later
+            // Handle retry events from the streaming system
+            const retryEvent = event as ServerGeminiRetryEvent;
+            const retryMessage = `✕ API Error (${retryEvent.errorType}) · Retrying in ${retryEvent.delaySeconds} seconds… (attempt ${retryEvent.attempt}/${retryEvent.maxAttempts})`;
+            
+            addItem(
+              {
+                type: MessageType.INFO,
+                text: retryMessage,
+              },
+              Date.now(),
+            );
             break;
           default: {
             // enforces exhaustive switch-case

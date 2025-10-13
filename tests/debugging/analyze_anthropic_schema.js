@@ -25,17 +25,19 @@ const anthropicNativeFormat = {
 console.log(JSON.stringify(anthropicNativeFormat, null, 2));
 
 console.log('\n=== OUR BEDROCK FORMAT ===');
+// Get current working directory dynamically
+const currentDir = process.cwd();
 const ourBedrockFormat = {
   "name": "list_directory",
-  "description": "Lists files in the specified directory. ALWAYS provide the 'path' parameter. For current directory use: {\"path\": \"/Users/gwestaway/Documents/workspace/zilo-dev-x-code\"}",
+  "description": `Lists files in the specified directory. ALWAYS provide the 'path' parameter. For current directory use: {"path": "${currentDir}"}`,
   "input_schema": {
     "type": "object",
     "properties": {
       "path": {
         "type": "string",
-        "description": "REQUIRED: The absolute path to the directory to list. For current directory, use exactly: \"/Users/gwestaway/Documents/workspace/zilo-dev-x-code\"",
-        "default": "/Users/gwestaway/Documents/workspace/zilo-dev-x-code",
-        "example": "/Users/gwestaway/Documents/workspace/zilo-dev-x-code"
+        "description": `REQUIRED: The absolute path to the directory to list. For current directory, use exactly: "${currentDir}"`,
+        "default": currentDir,
+        "example": currentDir
       }
     },
     "required": ["path"],

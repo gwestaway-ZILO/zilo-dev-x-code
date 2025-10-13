@@ -77,11 +77,14 @@ import type { AgentDefinition } from '../agents/types.js';
 import type { FunctionDeclaration } from '@google/genai';
 import { DevXSettingsLoader, type AgentSettings } from './settings.js';
 import { MemoryComposer, type ComposedMemory } from './memory.js';
+import { SessionManagerService } from '../services/sessionManagerService.js';
+import { ToolApprovalBridge } from '../services/toolApprovalBridge.js';
 
 export enum ApprovalMode {
   DEFAULT = 'default',
   AUTO_EDIT = 'autoEdit',
   YOLO = 'yolo',
+  MOBILE = 'mobile',
 }
 
 export interface AccessibilitySettings {
@@ -233,6 +236,8 @@ export interface ConfigParameters {
   enableToolOutputTruncation?: boolean;
   eventEmitter?: EventEmitter;
   useSmartEdit?: boolean;
+  mobileSessionPort?: number;
+  enableMobileSession?: boolean;
 }
 
 export class Config {
@@ -319,6 +324,10 @@ export class Config {
   private currentAgent: AgentDefinition | undefined;
   private devxSettingsLoader: DevXSettingsLoader;
   private memoryComposer: MemoryComposer;
+  private sessionManager?: SessionManagerService;
+  private toolApprovalBridge?: ToolApprovalBridge;
+  private readonly mobileSessionPort: number;
+  private readonly enableMobileSession: boolean;
 
   constructor(params: ConfigParameters) {
     this.sessionId = params.sessionId;
@@ -406,6 +415,14 @@ export class Config {
     this.currentAgent = undefined;
     this.devxSettingsLoader = new DevXSettingsLoader(this.targetDir);
     this.memoryComposer = new MemoryComposer(this.targetDir);
+    this.mobileSessionPort = params.mobileSessionPort ?? 8080;
+    this.enableMobileSession = params.enableMobileSession ?? false;
+
+    // Initialize mobile session components if enabled
+    if (this.enableMobileSession) {
+      this.sessionManager = new SessionManagerService(this, this.mobileSessionPort);
+      this.toolApprovalBridge = new ToolApprovalBridge(this.sessionManager);
+    }
 
     if (params.contextFileName) {
       setGeminiMdFilename(params.contextFileName);
@@ -1156,6 +1173,34 @@ export class Config {
   async composeMemory(): Promise<ComposedMemory> {
     const agentMemory = this.currentAgent?.memory;
     return await this.memoryComposer.composeMemory(agentMemory);
+  }
+
+  /**
+   * Gets the session manager instance (mobile session support)
+   */
+  getSessionManager(): SessionManagerService | undefined {
+    return this.sessionManager;
+  }
+
+  /**
+   * Gets the tool approval bridge instance (mobile session support)
+   */
+  getToolApprovalBridge(): ToolApprovalBridge | undefined {
+    return this.toolApprovalBridge;
+  }
+
+  /**
+   * Checks if mobile session management is enabled
+   */
+  isMobileSessionEnabled(): boolean {
+    return this.enableMobileSession;
+  }
+
+  /**
+   * Gets the mobile session server port
+   */
+  getMobileSessionPort(): number {
+    return this.mobileSessionPort;
   }
 }
 // Export model constants for use in CLI

@@ -11,6 +11,7 @@
 
 - **🤖 Multi-Provider AI**: Support for **Claude 4 Sonnet**, **Claude 3.5 Sonnet/Haiku** via AWS Bedrock + Anthropic API, plus full Gemini support
 - **👥 Agent System**: Create specialized AI personas with **restricted tool access** and custom system prompts ✨ **NEW**
+- **🚀 Multi-Agent Delegation**: Delegate complex tasks to **multiple AI agents working in parallel** ✨ **NEW**
 - **🔧 Comprehensive Tools**: File operations, shell commands, web fetching, advanced search, and more
 - **🛡️ Enterprise Ready**: Granular tool access control perfect for security-conscious environments
 - **🔌 Extensible**: MCP (Model Context Protocol) support for custom integrations
@@ -19,30 +20,101 @@
 
 ## 📦 Installation
 
-### Build from Source
+### Prerequisites
+
+Before installing DevX CLI, ensure you have:
+
+- **Node.js version 20 or higher** - [Download Node.js](https://nodejs.org/)
+- **npm** (comes with Node.js)
+- **macOS, Linux, or Windows**
+- For AWS Bedrock: Valid AWS credentials with Bedrock access
+
+### Local Installation & Running
 
 **DevX CLI** is currently available as a source build while we prepare official distribution packages.
 
+#### Option 1: Run Locally (Development Mode)
+
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/your-org/devx-cli
 cd devx-cli
 
-# Install dependencies and build
+# 2. Install dependencies
+npm install
+
+# 3. Build the project
+npm run build
+
+# 4. Run DevX CLI locally
+npm start
+
+# Alternative: Run the bundled version directly
+node bundle/gemini.js
+```
+
+#### Option 2: Install Globally (Recommended)
+
+For easier access from anywhere on your system:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-org/devx-cli
+cd devx-cli
+
+# 2. Install dependencies
+npm install
+
+# 3. Run the global installation script
+./install-devx-global.sh
+
+# 4. Run DevX CLI from anywhere
+devx
+```
+
+The global install script will:
+- Build the DevX CLI bundle
+- Create a global `devx` executable
+- Automatically add it to your PATH (macOS/Linux)
+
+**Troubleshooting Global Install:**
+
+If the automatic PATH setup doesn't work, manually create a symlink:
+
+```bash
+# macOS/Linux
+sudo ln -sf /path/to/devx-cli/devx /usr/local/bin/devx
+
+# Or add to your shell profile (.bashrc, .zshrc, etc.)
+export PATH="/path/to/devx-cli:$PATH"
+```
+
+#### Updating DevX CLI
+
+```bash
+# Navigate to your devx-cli directory
+cd devx-cli
+
+# Pull latest changes
+git pull
+
+# Rebuild
 npm install
 npm run build
 
-# Run the CLI
-npm start
-# or use the built binary
-./bundle/gemini.js
+# If globally installed, re-run the install script
+./install-devx-global.sh
 ```
 
-#### System Requirements
+#### Uninstalling
 
-- Node.js version 20 or higher
-- macOS, Linux, or Windows
-- For AWS Bedrock: Valid AWS credentials with Bedrock access
+```bash
+# If globally installed
+rm /usr/local/bin/devx  # or /opt/homebrew/bin/devx on Apple Silicon
+
+# Remove the repository
+rm -rf /path/to/devx-cli
+```
 
 ## 🏗️ Development Status
 
@@ -71,6 +143,15 @@ For detailed technical information, see [CURRENT_IMPLEMENTATION_STATUS.md](./CUR
 - **Custom System Prompts**: Define agent behavior and expertise areas
 - **Workspace & User Agents**: Personal and project-specific agent libraries
 - **Agent Management**: Full lifecycle management with `/agent` commands
+
+### Multi-Agent Delegation System ✨ NEW
+
+- **Parallel Task Execution**: Automatically decompose complex tasks and execute them with multiple AI agents simultaneously
+- **Intelligent Task Planning**: Uses Claude 4 Sonnet to create optimal task decomposition strategies
+- **File Scope Isolation**: Prevents agent conflicts through glob-based file access restrictions
+- **Real-time Progress Tracking**: Live status updates with conflict detection and changeset monitoring
+- **Comprehensive Reporting**: Detailed execution reports with VS Code integration for artifact viewing
+- **Bedrock Optimized**: Rate-limited parallel execution optimized for AWS Bedrock infrastructure
 
 ### Code Understanding & Generation
 
@@ -235,6 +316,46 @@ Focus on identifying potential security issues, authentication problems,
 and unsafe coding practices. Be thorough but concise in your analysis.
 ```
 
+### Multi-Agent Delegation System ✨ NEW
+
+Delegate complex tasks to multiple AI agents working in parallel:
+
+#### Basic delegation with automatic task planning
+
+```bash
+devx
+> /delegate "add comprehensive unit tests for all services" --agents=3
+```
+
+#### Delegate with specific file scope and strategy
+
+```bash
+devx
+> /delegate "refactor authentication module" --agents=2 --strategy=files --globs="src/auth/**/*"
+```
+
+#### Advanced delegation with custom settings
+
+```bash
+devx
+> /delegate "update documentation and add examples" --agents=4 --strategy=skills --max-parallel=2 --timeout=900
+```
+
+#### View delegation results
+
+```bash
+devx
+> /delegate report                # View latest execution summary
+> /delegate report --open         # Open detailed artifacts in VS Code
+```
+
+#### Available delegation strategies:
+- `auto`: Let planner decide best approach (default)
+- `files`: Decompose by file/directory boundaries
+- `skills`: Decompose by required skills/agents
+- `sequential`: Create dependent tasks that run in order
+- `parallel`: Create fully independent parallel tasks
+
 ### Quick Examples
 
 #### Start a new project with DevX CLI
@@ -266,7 +387,7 @@ devx
 
 ### Core Features
 
-- [**Commands Reference**](./docs/cli/commands.md) - All slash commands (`/help`, `/chat`, `/mcp`, etc.)
+- [**Commands Reference**](./docs/cli/commands.md) - All slash commands (`/help`, `/chat`, `/mcp`, `/delegate`, etc.)
 - [**Checkpointing**](./docs/checkpointing.md) - Save and resume conversations
 - [**Memory Management**](./docs/tools/memory.md) - Using GEMINI.md context files
 - [**Token Caching**](./docs/cli/token-caching.md) - Optimize token usage
@@ -362,22 +483,40 @@ See the [Uninstall Guide](docs/Uninstall.md) for removal instructions.
 ## ⚡ Quick Start Summary
 
 ```bash
-# 1. Build from source
-git clone https://github.com/your-org/devx-cli && cd devx-cli
-npm install && npm run build
+# 1. Clone and install
+git clone https://github.com/your-org/devx-cli
+cd devx-cli
+npm install
 
-# 2. Set up AWS Bedrock for Claude models
-export AWS_ACCESS_KEY_ID="your_key"
-export AWS_SECRET_ACCESS_KEY="your_secret" 
-export AWS_REGION="us-east-1"
+# 2. Run locally (Development Mode)
+npm run build
+npm start
 
-# 3. Run DevX CLI
+# OR: Install globally for system-wide access
+./install-devx-global.sh
 devx
 
-# 4. Try the Agent System
+# 3. Set up authentication (AWS Bedrock for Claude models)
+export AWS_ACCESS_KEY_ID="your_key"
+export AWS_SECRET_ACCESS_KEY="your_secret"
+export AWS_REGION="us-east-1"
+
+# OR: Use Anthropic API directly
+export ANTHROPIC_API_KEY="your_api_key"
+
+# 4. Run DevX CLI
+devx  # if globally installed
+# OR
+npm start  # if running locally
+
+# 5. Try the Agent System
 > /agent list
 > /agent create my-specialist
 > /agent use my-specialist
+
+# 6. Try Multi-Agent Delegation
+> /delegate "add unit tests for all components" --agents=3
+> /delegate report --open
 ```
 
-**Need Help?** Check the [CURRENT_IMPLEMENTATION_STATUS.md](./CURRENT_IMPLEMENTATION_STATUS.md) for detailed technical information and the latest features.
+**Need Help?** Check the [documentation](./docs/cli/index.md) or run `/help` within DevX CLI.

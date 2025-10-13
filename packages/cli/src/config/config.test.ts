@@ -1196,7 +1196,7 @@ describe('Approval mode tool exclusion logic', () => {
         invalidArgv as CliArgs,
       ),
     ).rejects.toThrow(
-      'Invalid approval mode: invalid_mode. Valid values are: yolo, auto_edit, default',
+      'Invalid approval mode: invalid_mode. Valid values are: yolo, auto_edit, default, mobile',
     );
   });
 });

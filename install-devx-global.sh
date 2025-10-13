@@ -40,18 +40,62 @@ EOF
 # Make it executable
 chmod +x "$DEVX_SCRIPT"
 
-# Create symlink in PATH
-echo "🔗 Creating symlink in /opt/homebrew/bin..."
-ln -sf "$DEVX_SCRIPT" /opt/homebrew/bin/devx
+# Create symlink in PATH - cross-platform detection
+echo "🔗 Creating symlink in appropriate bin directory..."
+
+# Detect appropriate bin directory
+BIN_DIR=""
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS - check for different Homebrew locations
+  if [[ -d "/opt/homebrew/bin" ]]; then
+    BIN_DIR="/opt/homebrew/bin"  # Apple Silicon
+  elif [[ -d "/usr/local/bin" ]]; then
+    BIN_DIR="/usr/local/bin"     # Intel Mac
+  fi
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+  # Linux - use standard locations
+  if [[ -d "/usr/local/bin" ]]; then
+    BIN_DIR="/usr/local/bin"
+  elif [[ -d "$HOME/.local/bin" ]]; then
+    BIN_DIR="$HOME/.local/bin"
+  fi
+fi
+
+# Create symlink if we found a suitable directory
+if [[ -n "$BIN_DIR" && -w "$BIN_DIR" ]]; then
+  ln -sf "$DEVX_SCRIPT" "$BIN_DIR/devx"
+  echo "✅ Symlink created: $BIN_DIR/devx -> $DEVX_SCRIPT"
+else
+  echo "⚠️  Could not automatically create symlink. Manual setup required:"
+  echo "   sudo ln -sf '$DEVX_SCRIPT' /usr/local/bin/devx"
+  echo "   OR add the following to your shell profile:"
+  echo "   export PATH=\"$SCRIPT_DIR:\$PATH\""
+fi
 
 echo "✅ DevX CLI installed successfully!"
+echo ""
+echo "🚀 New Multi-Agent Delegation System Available!"
+echo "   Delegate complex tasks to multiple AI agents working in parallel"
 echo ""
 echo "Test it:"
 echo "  devx --version"
 echo "  devx --help"
 echo "  devx init"
 echo ""
-echo "📍 Installed to: /opt/homebrew/bin/devx -> $DEVX_SCRIPT"
+echo "Try the new delegation features:"
+echo "  devx"  # Enter interactive mode, then use:
+echo "    /delegate \"add unit tests for all services\" --agents=3"
+echo "    /delegate \"refactor authentication module\" --agents=2 --strategy=files"
+echo "    /delegate report --open  # View detailed execution results"
 echo ""
-echo "🔄 To update, re-run this script: ./install-devx-global.sh"
-echo "🗑️  To uninstall: rm /opt/homebrew/bin/devx"
+if [[ -n "$BIN_DIR" && -w "$BIN_DIR" ]]; then
+  echo "📍 Installed to: $BIN_DIR/devx -> $DEVX_SCRIPT"
+  echo ""
+  echo "🔄 To update, re-run this script: ./install-devx-global.sh"
+  echo "🗑️  To uninstall: rm $BIN_DIR/devx"
+else
+  echo "📍 DevX script created at: $DEVX_SCRIPT"
+  echo "   Follow the manual setup instructions above to add to PATH"
+  echo ""
+  echo "🔄 To update, re-run this script: ./install-devx-global.sh"
+fi

@@ -8,12 +8,14 @@ import { type Config } from '@google/gemini-cli-core';
 import { type LoadedSettings } from '../config/settings.js';
 import { performInitialAuth } from './auth.js';
 import { validateTheme } from './theme.js';
+import { MobileSessionIntegration } from '../services/mobileSessionIntegration.js';
 
 export interface InitializationResult {
   authError: string | null;
   themeError: string | null;
   shouldOpenAuthDialog: boolean;
   geminiMdFileCount: number;
+  mobileSessionIntegration?: MobileSessionIntegration;
 }
 
 /**
@@ -36,10 +38,15 @@ export async function initializeApp(
   const shouldOpenAuthDialog =
     settings.merged.security?.auth?.selectedType === undefined || !!authError;
 
+  // Initialize mobile session integration if needed
+  const mobileSessionIntegration = new MobileSessionIntegration(config);
+  await mobileSessionIntegration.startIfNeeded();
+
   return {
     authError,
     themeError,
     shouldOpenAuthDialog,
     geminiMdFileCount: config.getGeminiMdFileCount(),
+    mobileSessionIntegration,
   };
 }

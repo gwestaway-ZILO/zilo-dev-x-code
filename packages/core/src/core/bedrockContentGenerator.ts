@@ -28,6 +28,8 @@ import {
 import type { ContentGenerator } from './contentGenerator.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { PerformanceMonitor } from '../utils/performanceMonitor.js';
+import { withRetry } from '../utils/retryLogic.js';
+import { retryMessageService } from '../utils/retryMessageService.js';
 
 // Bedrock inference profiles (these ARE the model IDs for cross-region inference)
 // The inference profile includes the region prefix (us. or global.) for routing
@@ -123,19 +125,37 @@ interface BedrockStreamChunk {
 export class BedrockContentGenerator implements ContentGenerator {
   private client: BedrockRuntimeClient;
   private bedrockModelId: string;
+  private region: string;
   private static loggedProfiles = new Set<string>();
   private static clientPool = new Map<string, BedrockRuntimeClient>();
   private static toolSchemaCache = new Map<string, any[]>();
   private debugMode: boolean;
   private performanceMonitor: PerformanceMonitor;
+  private onRetryCallback?: (attempt: number, maxAttempts: number, delaySeconds: number, errorType: string) => void;
 
-  constructor(model: string, region?: string, debugMode = false) {
+  constructor(
+    model: string, 
+    region?: string, 
+    debugMode = false, 
+    onRetry?: (attempt: number, maxAttempts: number, delaySeconds: number, errorType: string) => void
+  ) {
+    console.log(`[BEDROCK-GEN] 🚨 CONSTRUCTOR CALLED - Model: ${model}, Region: ${region}, DebugMode: ${debugMode}`);
+    
+    // Configure timeout from environment variable (default 120s, max 600s like Claude Code)
+    const timeoutMs = Math.min(
+      parseInt(process.env['API_TIMEOUT_MS'] || '120000', 10),
+      600000 // 10 minute max
+    );
     this.debugMode = debugMode;
     this.performanceMonitor = PerformanceMonitor.getInstance();
     this.performanceMonitor.setDebugMode(debugMode);
+    this.onRetryCallback = onRetry || this.createRetryCallback();
+    
+    // Use provided region or environment variable, default to us-west-2
+    this.region = region || process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-west-2';
     
     if (this.debugMode) {
-      console.log(`[BEDROCK-GEN] BedrockContentGenerator constructor - Model: ${model}, Region: ${region || 'default'}`);
+      console.log(`[BEDROCK-GEN] BedrockContentGenerator constructor - Model: ${model}, Region: ${this.region}`);
     }
     
     // Map the model name to the correct inference profile
@@ -147,33 +167,50 @@ export class BedrockContentGenerator implements ContentGenerator {
     
     // Only log each profile once to prevent duplicate messages
     if (!BedrockContentGenerator.loggedProfiles.has(this.bedrockModelId)) {
-      console.log(`Using Bedrock inference profile: ${this.bedrockModelId}`);
+      console.log(`Using Bedrock inference profile: ${this.bedrockModelId} in region ${this.region}`);
       BedrockContentGenerator.loggedProfiles.add(this.bedrockModelId);
     }
     
     // Use connection pooling for AWS SDK clients
-    const clientKey = `${model}-${region || 'default'}`;
+    const clientKey = `${model}-${this.region}`;
     if (!BedrockContentGenerator.clientPool.has(clientKey)) {
       BedrockContentGenerator.clientPool.set(clientKey, new BedrockRuntimeClient({
-        region: region || process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'] || 'us-east-1',
-        maxAttempts: 3,
+        region: this.region,
+        maxAttempts: 1, // Let our retry logic handle retries
         requestHandler: {
-          connectionTimeout: 5000,
-          socketTimeout: 30000,
+          connectionTimeout: Math.min(timeoutMs / 4, 30000), // Connection timeout = 1/4 of total timeout
+          socketTimeout: timeoutMs, // Use configurable timeout
         },
       }));
+      
+      if (debugMode) {
+        console.log(`[BEDROCK-GEN] ⏱️  Configured timeouts: connection=${Math.min(timeoutMs / 4, 30000)}ms, socket=${timeoutMs}ms`);
+      }
     }
     this.client = BedrockContentGenerator.clientPool.get(clientKey)!;
     
     if (this.debugMode) {
-      console.log(`[BEDROCK-GEN] BedrockContentGenerator initialized`);
+      console.log(`[BEDROCK-GEN] BedrockContentGenerator initialized with enhanced retry logic`);
     }
+  }
+
+  private createRetryCallback() {
+    return (attempt: number, maxAttempts: number, delaySeconds: number, errorType: string) => {
+      // Emit to UI via the retry message service
+      retryMessageService.emitRetryMessage({
+        attempt,
+        maxAttempts,
+        delaySeconds,
+        errorType,
+      });
+    };
   }
 
   async generateContent(
     request: GenerateContentParameters,
     userPromptId: string,
   ): Promise<GenerateContentResponse> {
+    console.log(`[BEDROCK-GEN] 🔥 GENERATE CONTENT CALLED - UserPromptId: ${userPromptId}, DebugMode: ${this.debugMode}`);
     return this.performanceMonitor.timeAsync(
       'bedrock-generate-content',
       async () => {
@@ -181,7 +218,10 @@ export class BedrockContentGenerator implements ContentGenerator {
           console.log(`[BEDROCK-GEN] generateContent called - UserPromptId: ${userPromptId}`);
         }
         
-        try {
+        return withRetry(async () => {
+          if (this.debugMode) {
+            console.log(`[BEDROCK-GEN] Making API call to ${this.bedrockModelId} in ${this.region}...`);
+          }
           const bedrockRequest = await this.performanceMonitor.timeAsync(
             'bedrock-convert-request',
             () => Promise.resolve(this.convertToBedrockRequest(request))
@@ -221,13 +261,20 @@ export class BedrockContentGenerator implements ContentGenerator {
             }
           }
           
-          return this.performanceMonitor.timeSync(
+          const convertedResponse = this.performanceMonitor.timeSync(
             'bedrock-convert-response',
             () => this.convertFromBedrockResponse(responseBody)
           );
-        } catch (error) {
-          throw new Error(`Bedrock API error: ${getErrorMessage(error)}`);
-        }
+          
+          if (this.debugMode) {
+            const tokens = convertedResponse.usageMetadata?.totalTokenCount || 0;
+            console.log(`[BEDROCK-GEN] ✅ Request completed successfully. Used ${tokens} tokens.`);
+          }
+
+          return convertedResponse;
+        }, {
+          onRetry: this.onRetryCallback, // Use callback if provided
+        });
       },
       { userPromptId, model: this.bedrockModelId }
     );
@@ -255,7 +302,121 @@ export class BedrockContentGenerator implements ContentGenerator {
       console.log(`[BEDROCK-GEN] generateContentStream called - UserPromptId: ${userPromptId}`);
     }
     
-    return this.doGenerateContentStream(request, userPromptId);
+    // Create a retryable stream wrapper
+    return this.createRetryableStream(request, userPromptId);
+  }
+
+  private async *createRetryableStream(
+    request: GenerateContentParameters,
+    userPromptId: string,
+  ): AsyncGenerator<GenerateContentResponse> {
+    let attempt = 0;
+    const maxRetries = 5; // More persistent streaming retries like Claude Code
+    const initialDelayMs = 2000;
+    const backoffMultiplier = 2;
+    const jitterMs = 1000;
+
+    while (attempt <= maxRetries) {
+      try {
+        if (this.debugMode && attempt > 0) {
+          console.log(`[BEDROCK-GEN] 🔄 Stream retry attempt ${attempt + 1}/${maxRetries + 1}`);
+        }
+
+        // Create a new stream for each attempt
+        const stream = this.doGenerateContentStream(request, userPromptId);
+        
+        // Consume the entire stream and collect responses
+        const responses: GenerateContentResponse[] = [];
+        for await (const response of stream) {
+          responses.push(response);
+        }
+        
+        // If we get here, the stream was successful - yield all responses
+        for (const response of responses) {
+          yield response;
+        }
+        
+        if (this.debugMode && attempt > 0) {
+          console.log(`[BEDROCK-GEN] ✅ Stream retry attempt ${attempt + 1} succeeded`);
+        }
+        
+        return; // Success, exit the retry loop
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Check if error is retryable
+        const isRetryable = this.isStreamRetryableError(errorMessage);
+        
+        if (!isRetryable || attempt === maxRetries) {
+          if (this.debugMode) {
+            console.log(`[BEDROCK-GEN] ❌ Stream error not retryable or max retries reached: ${errorMessage}`);
+          }
+          throw error; // Not retryable or max retries reached
+        }
+
+        // Calculate delay with exponential backoff
+        const delayMs = Math.min(
+          initialDelayMs * Math.pow(backoffMultiplier, attempt),
+          20000 // maxDelayMs - longer for streaming
+        );
+        const jitter = Math.random() * jitterMs;
+        const totalDelay = delayMs + jitter;
+
+        // Claude Code style streaming retry logging
+        const delaySeconds = Math.round(totalDelay / 1000);
+        const errorType = errorMessage.toLowerCase().includes('rate limit') || errorMessage.toLowerCase().includes('too many tokens')
+          ? 'Rate limited'
+          : errorMessage.toLowerCase().includes('timeout')
+          ? 'Request timed out'
+          : 'Stream error';
+        
+        // Emit retry event if callback provided, otherwise fallback to console.log
+        if (this.onRetryCallback) {
+          this.onRetryCallback(attempt + 1, maxRetries + 1, delaySeconds, errorType);
+        } else {
+          console.log(`✕ API Error (${errorType}) · Retrying in ${delaySeconds} seconds… (stream attempt ${attempt + 1}/${maxRetries + 1})`);
+        }
+
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
+        attempt++;
+      }
+    }
+  }
+
+  private isStreamRetryableError(errorMessage: string): boolean {
+    const errorString = errorMessage.toLowerCase();
+    
+    // Check for wrapped Bedrock streaming errors first
+    if (errorString.includes('bedrock streaming error:')) {
+      // Extract the inner error message after the wrapper
+      const innerError = errorString.split('bedrock streaming error:')[1]?.trim() || errorString;
+      return this.isRetryableErrorCore(innerError);
+    }
+    
+    return this.isRetryableErrorCore(errorString);
+  }
+
+  private isRetryableErrorCore(errorString: string): boolean {
+    return (
+      errorString.includes('too many tokens') ||
+      errorString.includes('throttlingexception') ||
+      errorString.includes('toomanyrequestsexception') ||
+      errorString.includes('rate limit') ||
+      errorString.includes('rate-limit') ||
+      errorString.includes('quota exceeded') ||
+      errorString.includes('service unavailable') ||
+      errorString.includes('timeout') ||
+      errorString.includes('503') ||
+      errorString.includes('502') ||
+      errorString.includes('429') ||
+      errorString.includes('network') ||
+      errorString.includes('connection') ||
+      errorString.includes('econnreset') ||
+      errorString.includes('enotfound') ||
+      errorString.includes('etimedout')
+    );
   }
 
   private async *doGenerateContentStream(
@@ -263,6 +424,11 @@ export class BedrockContentGenerator implements ContentGenerator {
     userPromptId: string,
   ): AsyncGenerator<GenerateContentResponse> {
     try {
+      if (this.debugMode) {
+        console.log(`[BEDROCK-GEN] 🌊 doGenerateContentStream called - UserPromptId: ${userPromptId}`);
+        console.log(`[BEDROCK-GEN] Making streaming API call to ${this.bedrockModelId} in ${this.region}...`);
+      }
+
       const bedrockRequest = this.convertToBedrockRequest(request);
       
       if (this.debugMode && bedrockRequest.tools?.length) {
@@ -285,6 +451,7 @@ export class BedrockContentGenerator implements ContentGenerator {
 
       let accumulatedText = '';
       let currentToolUse: { id: string; name: string; input: any; inputBuffer?: string } | null = null;
+      let totalTokensUsed = 0; // Track actual token usage
       const decoder = new TextDecoder();
 
       for await (const chunk of response.body) {
@@ -370,15 +537,20 @@ export class BedrockContentGenerator implements ContentGenerator {
               },
             ];
             if (chunkData.message?.usage) {
+              totalTokensUsed = chunkData.message.usage.input_tokens + chunkData.message.usage.output_tokens;
               finalResponse.usageMetadata = {
                 promptTokenCount: chunkData.message.usage.input_tokens,
                 candidatesTokenCount: chunkData.message.usage.output_tokens,
-                totalTokenCount: chunkData.message.usage.input_tokens + chunkData.message.usage.output_tokens,
+                totalTokenCount: totalTokensUsed,
               } as GenerateContentResponseUsageMetadata;
             }
             yield finalResponse;
           }
         }
+      }
+      
+      if (this.debugMode) {
+        console.log(`[BEDROCK-GEN] ✅ Streaming request completed successfully. Used ${totalTokensUsed} tokens.`);
       }
     } catch (error) {
       throw new Error(`Bedrock streaming error: ${getErrorMessage(error)}`);
@@ -859,4 +1031,6 @@ export class BedrockContentGenerator implements ContentGenerator {
         return 'other' as FinishReason;
     }
   }
+
+  // Removed estimateTokens method - no longer needed without quota management
 }

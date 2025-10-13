@@ -187,6 +187,9 @@ export class LoggingContentGenerator implements ContentGenerator {
         JSON.stringify(responses),
       );
     } catch (error) {
+      // Don't interfere with retry logic - let the underlying generator handle retries
+      console.log(`[LOGGING-GEN] ⚠️  Stream error occurred, letting underlying generator handle retries: ${error instanceof Error ? error.message : String(error)}`);
+      
       const durationMs = Date.now() - startTime;
       this._logApiError(
         durationMs,

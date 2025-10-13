@@ -30,12 +30,12 @@
 ## Target capabilities
 
 ### Core requirements
-- [x] **Direct Anthropic API support** via `ANTHROPIC_API_KEY`
-- [x] **Skip Google authentication** when using Anthropic
-- [x] **Claude 3.5 Sonnet** as default model
+- [ ] **Direct Anthropic API support** via `ANTHROPIC_API_KEY`
+- [ ] **Skip Google authentication** when using Anthropic
+- [ ] **Claude 3.5 Sonnet** as default model
 - [ ] **Claude 3 Opus** support with model selection
-- [x] **All existing CLI tools** work with Anthropic
-- [x] **Streaming responses** for better interactivity
+- [ ] **All existing CLI tools** work with Anthropic
+- [ ] **Streaming responses** for better interactivity
 
 ### What we DON'T need
 - ❌ Complex provider abstraction layers

@@ -61,6 +61,10 @@ export enum GeminiEventType {
 
 export type ServerGeminiRetryEvent = {
   type: GeminiEventType.Retry;
+  attempt: number;
+  maxAttempts: number;
+  delaySeconds: number;
+  errorType: string; // 'Rate limited', 'Request timed out', etc.
 };
 
 export interface StructuredError {
@@ -234,7 +238,13 @@ export class Turn {
 
         // Handle the new RETRY event
         if (streamEvent.type === 'retry') {
-          yield { type: GeminiEventType.Retry };
+          yield { 
+            type: GeminiEventType.Retry,
+            attempt: 1, // Default values for compatibility
+            maxAttempts: 3,
+            delaySeconds: 1,
+            errorType: 'API error',
+          };
           continue; // Skip to the next event in the stream
         }
 

@@ -144,9 +144,9 @@ export async function parseArguments(settings: Settings): Promise<CliArgs> {
         })
         .option('approval-mode', {
           type: 'string',
-          choices: ['default', 'auto_edit', 'yolo'],
+          choices: ['default', 'auto_edit', 'yolo', 'mobile'],
           description:
-            'Set the approval mode: default (prompt for approval), auto_edit (auto-approve edit tools), yolo (auto-approve all tools)',
+            'Set the approval mode: default (prompt for approval), auto_edit (auto-approve edit tools), yolo (auto-approve all tools), mobile (approve via mobile app)',
         })
         .option('telemetry', {
           type: 'boolean',
@@ -467,9 +467,12 @@ export async function loadCliConfig(
       case 'default':
         approvalMode = ApprovalMode.DEFAULT;
         break;
+      case 'mobile':
+        approvalMode = ApprovalMode.MOBILE;
+        break;
       default:
         throw new Error(
-          `Invalid approval mode: ${argv.approvalMode}. Valid values are: yolo, auto_edit, default`,
+          `Invalid approval mode: ${argv.approvalMode}. Valid values are: yolo, auto_edit, default, mobile`,
         );
     }
   } else {
@@ -576,6 +579,7 @@ export async function loadCliConfig(
     userMemory: memoryContent,
     geminiMdFileCount: fileCount,
     approvalMode,
+    enableMobileSession: approvalMode === ApprovalMode.MOBILE,
     showMemoryUsage:
       argv.showMemoryUsage || settings.ui?.showMemoryUsage || false,
     accessibility: {

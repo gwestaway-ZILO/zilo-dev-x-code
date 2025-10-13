@@ -754,6 +754,83 @@ export class CoreToolScheduler {
               ToolConfirmationOutcome.ProceedAlways,
             );
             this.setStatusInternal(reqInfo.callId, 'scheduled');
+          } else if (this.config.getApprovalMode() === ApprovalMode.MOBILE) {
+            // Mobile approval mode - delegate to mobile app
+            const sessionManager = this.config.getSessionManager();
+            const toolApprovalBridge = this.config.getToolApprovalBridge();
+            
+            if (sessionManager && toolApprovalBridge) {
+              // Use mobile confirmation handler
+              const mobileConfirmHandler = toolApprovalBridge.createMobileConfirmHandler(
+                this.config.getSessionId()
+              );
+              
+              const wrappedConfirmationDetails: ToolCallConfirmationDetails = {
+                ...confirmationDetails,
+                onConfirm: async (outcome: ToolConfirmationOutcome, payload?: ToolConfirmationPayload) => {
+                  await confirmationDetails.onConfirm(outcome);
+                  return this.handleConfirmationResponse(
+                    reqInfo.callId,
+                    confirmationDetails.onConfirm,
+                    outcome,
+                    signal,
+                    payload,
+                  );
+                },
+              };
+              
+              this.setStatusInternal(
+                reqInfo.callId,
+                'awaiting_approval',
+                wrappedConfirmationDetails,
+              );
+              
+              // Get the updated tool call with proper status and confirmationDetails
+              const waitingToolCall = this.toolCalls.find(
+                (call) => call.request.callId === reqInfo.callId && call.status === 'awaiting_approval'
+              ) as WaitingToolCall;
+              
+              // Let mobile handler take over the approval process
+              mobileConfirmHandler(waitingToolCall).then((outcome) => {
+                this.setToolCallOutcome(reqInfo.callId, outcome);
+                if (outcome === ToolConfirmationOutcome.Cancel) {
+                  this.setStatusInternal(reqInfo.callId, 'cancelled', 'Denied via mobile app');
+                } else {
+                  this.setStatusInternal(reqInfo.callId, 'scheduled');
+                }
+                this.attemptExecutionOfScheduledCalls(signal);
+              }).catch((error) => {
+                console.error('Mobile approval error:', error);
+                this.setStatusInternal(
+                  reqInfo.callId,
+                  'cancelled',
+                  'Mobile approval failed'
+                );
+              });
+            } else {
+              // Fallback to default approval if mobile components not available
+              console.warn('Mobile approval mode enabled but components not initialized, falling back to default');
+              const originalOnConfirm = confirmationDetails.onConfirm;
+              const wrappedConfirmationDetails: ToolCallConfirmationDetails = {
+                ...confirmationDetails,
+                onConfirm: (
+                  outcome: ToolConfirmationOutcome,
+                  payload?: ToolConfirmationPayload,
+                ) =>
+                  this.handleConfirmationResponse(
+                    reqInfo.callId,
+                    originalOnConfirm,
+                    outcome,
+                    signal,
+                    payload,
+                  ),
+              };
+              this.setStatusInternal(
+                reqInfo.callId,
+                'awaiting_approval',
+                wrappedConfirmationDetails,
+              );
+            }
           } else {
             // Allow IDE to resolve confirmation
             if (

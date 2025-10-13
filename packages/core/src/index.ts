@@ -7,6 +7,15 @@
 // Export config
 export * from './config/config.js';
 
+// Export mobile session services
+export * from './services/sessionManagerService.js';
+export * from './services/toolApprovalBridge.js';
+
+// Export orchestration services
+export * from './services/orchestrator.js';
+export * from './services/subtaskRunner.js';
+export * from './services/fileScope.js';
+
 // Export agents
 export * from './agents/types.js';
 
@@ -42,6 +51,8 @@ export * from './utils/editor.js';
 export * from './utils/quotaErrorDetection.js';
 export * from './utils/fileUtils.js';
 export * from './utils/retry.js';
+export * from './utils/retryMessageService.js';
+export type { RetryMessage } from './utils/retryMessageService.js';
 export * from './utils/shell-utils.js';
 export * from './utils/systemEncoding.js';
 export * from './utils/textUtils.js';
